@@ -1,0 +1,27 @@
+{
+  "name": "T2C",
+  "scripts": {
+    "lint": "prettier -c --write \"**/**.{js,jsx,tsx,ts,less,md,json}\""
+  },
+  "dependencies": {
+    "@langchain/community": "^0.3.40",
+    "@langchain/core": "^0.3.18",
+    "@langchain/langgraph": "^0.2.22",
+    "@langchain/openai": "^0.3.14",
+    "hnswlib-node": "^3.0.0",
+    "langsmith": "^0.2.7",
+    "pyodide": "^0.26.4",
+    "xlsx": "^0.18.5",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.5"
+  },
+  "devDependencies": {
+    "@tsconfig/recommended": "^1.0.8",
+    "@types/node": "^22.14.1",
+    "@types/xlsx": "^0.0.35",
+    "prettier": "^3.3.3",
+    "prettier-plugin-organize-imports": "^4.1.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  }
+}

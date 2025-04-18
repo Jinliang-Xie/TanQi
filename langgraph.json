@@ -1,0 +1,12 @@
+{
+  "node_version": "20",
+  "dockerfile_lines": [],
+  "dependencies": ["."],
+  "graphs": {
+    "rag_agent": "./src/rag_agent.ts:graph",
+    "kg_agent": "./src/kg_agent.ts:graph",
+    "rag_agent_new": "./src/rag_agent_new.ts:graph",
+    "lcaKeyAgent": "./src/lcaKeyAgent.ts:graph"
+  },
+  "env": ".env"
+}
