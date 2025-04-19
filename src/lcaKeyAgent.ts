@@ -82,7 +82,6 @@ async function demand_extractor(state: typeof stateAnnotation.State){
   const { messages, has_parallel_demands, demands, current_demand_index } = state;
   
   // 检查是否处理的是来自 workflow_restarter 的多需求
-  // 
   if (has_parallel_demands && demands && demands.length > 0) {
     // 如果有多个需求，则获取当前需要处理的需求
     if (current_demand_index < demands.length) {
