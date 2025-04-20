@@ -1,5 +1,3 @@
-# TianGong AI LangGraph Server
-
 ## Install dependencies
 
 ```bash
