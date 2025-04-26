@@ -68,134 +68,48 @@ const stateAnnotation = Annotation.Root({
     default: () => [], // 默认为空数组
     reducer: (x, y) => y, // 完全替换，不累加
   }),
-  current_demand_index: Annotation<number>({ // 添加当前处理的需求索引
-    default: () => 0, // 默认值为0
-    reducer: (x, y) => y, // 完全替换，不累加
-  }),
-  has_parallel_demands: Annotation<boolean>({ // 标记是否有多需求并行处理
-    default: () => false, // 默认为false
-    reducer: (x, y) => y, // 完全替换，不累加
-  }),
 });
 
 async function demand_extractor(state: typeof stateAnnotation.State){
-  const { messages, has_parallel_demands, demands, current_demand_index } = state;
+  const { messages } = state;
   
-  // 检查是否处理的是来自 workflow_restarter 的多需求
-  if (has_parallel_demands && demands && demands.length > 0) {
-    // 如果有多个需求，则获取当前需要处理的需求
-    if (current_demand_index < demands.length) {
-      const currentDemand = demands[current_demand_index];
-      console.log(`处理第 ${current_demand_index + 1}/${demands.length} 个需求: ${currentDemand.flow_name}`);
-      const query = currentDemand.content;
-      
-      const prompt = ChatPromptTemplate.fromTemplate(
-        `You are an expert in the field of LCA, specializing in identifying specific unit processes within larger production chains. You will be given a corporate carbon footprint modeling requirement described in natural language. Your task is to extract the following key details from the text, with a focus on specificity and accuracy:
-      - Process: Identify the most specific unit process involved in the final steps of production for the main product. Avoid general or broad descriptions; focus on the final, specific unit process where the main product is produced or finalized. Answer like "bauxite mining, main product: bauxite".
-      - Technology: The specific process, method, or technology mentioned, related directly to the unit process.
-      - Geographic Location: The country or region where the process takes place.
-      - Time Frame: The year or period referred to in the requirement.
-      Ensure that the extracted process details are as granular and specific as possible, corresponding to the smallest identifiable unit process directly involved in the production of the specified product.
-      **The given query**: {query}`
-      )
-      
-      const tool = {
-        name: 'demand_extractor',
-        description: 'Extracting demand from the given query.',
-        schema: z.object({
-          Process: z.string().describe('Extracted specific unit process'),
-          Technology: z.string().describe('Extracted Technology'),
-          geographicLocation: z.string().describe('Extracted Location'),
-          timeFrame: z.string().describe('Extracted Time Frame'),
-        }),
-      }
-    
-      const model = new ChatOpenAI({
-        apiKey: openai_api_key,
-        modelName: openai_chat_model,
-        temperature: 1,
-        streaming: false,
-      }).bindTools([tool], { tool_choice: tool.name });
-    
-      const chain = prompt.pipe(model);
-      const response = await chain.invoke({ query: query }) as AIMessage;
-    
-      // 更新状态，将 current_demand_index 增加 1
-      return {
-        messages: [response],
-        current_demand_index: current_demand_index + 1,
-        // 如果已经处理完所有需求，则设置 has_parallel_demands 为 false
-        has_parallel_demands: current_demand_index + 1 < demands.length
-      }
-    } else {
-      // 所有需求都已处理完毕，重置状态
-      console.log("所有并行需求已处理完毕");
-      return {
-        messages: [],
-        has_parallel_demands: false,
-        demands: [],
-        current_demand_index: 0
-      }
-    }
-  } else {
-    // 普通处理逻辑（非多需求场景）
-    const lastMessage = messages[messages.length - 1];
-    const query = lastMessage.content;
-    
-    const prompt = ChatPromptTemplate.fromTemplate(
-      `You are an expert in the field of LCA, specializing in identifying specific unit processes within larger production chains. You will be given a corporate carbon footprint modeling requirement described in natural language. Your task is to extract the following key details from the text, with a focus on specificity and accuracy:
-    - Process: Identify the most specific unit process involved in the final steps of production for the main product. Avoid general or broad descriptions; focus on the final, specific unit process where the main product is produced or finalized. Answer like "bauxite mining, main product: bauxite".
-    - Technology: The specific process, method, or technology mentioned, related directly to the unit process.
-    - Geographic Location: The country or region where the process takes place.
-    - Time Frame: The year or period referred to in the requirement.
-    Ensure that the extracted process details are as granular and specific as possible, corresponding to the smallest identifiable unit process directly involved in the production of the specified product.
-    **The given query**: {query}`
-    )
-    
-    const tool = {
-      name: 'demand_extractor',
-      description: 'Extracting demand from the given query.',
-      schema: z.object({
-        Process: z.string().describe('Extracted specific unit process'),
-        Technology: z.string().describe('Extracted Technology'),
-        geographicLocation: z.string().describe('Extracted Location'),
-        timeFrame: z.string().describe('Extracted Time Frame'),
-      }),
-    }
+  // Get the last message content as the query
+  const lastMessage = messages[messages.length - 1];
+  const query = lastMessage.content;
   
-    const model = new ChatOpenAI({
-      apiKey: openai_api_key,
-      modelName: openai_chat_model,
-      temperature: 1,
-      streaming: false,
-    }).bindTools([tool], { tool_choice: tool.name });
+  const prompt = ChatPromptTemplate.fromTemplate(
+    `You are an expert in the field of LCA, specializing in identifying specific unit processes within larger production chains. You will be given a corporate carbon footprint modeling requirement described in natural language. Your task is to extract the following key details from the text, with a focus on specificity and accuracy:
+  - Process: Identify the most specific unit process involved in the final steps of production for the main product. Avoid general or broad descriptions; focus on the final, specific unit process where the main product is produced or finalized. Answer like "bauxite mining, main product: bauxite".
+  - Technology: The specific process, method, or technology mentioned, related directly to the unit process.
+  - Geographic Location: The country or region where the process takes place.
+  - Time Frame: The year or period referred to in the requirement.
+  Ensure that the extracted process details are as granular and specific as possible, corresponding to the smallest identifiable unit process directly involved in the production of the specified product.
+  **The given query**: {query}`
+  )
   
-    const chain = prompt.pipe(model);
-    const response = await chain.invoke({ query: query }) as AIMessage;
-  
-    return {
-      messages: [response]
-    }
+  const tool = {
+    name: 'demand_extractor',
+    description: 'Extracting demand from the given query.',
+    schema: z.object({
+      Process: z.string().describe('Extracted specific unit process'),
+      Technology: z.string().describe('Extracted Technology'),
+      geographicLocation: z.string().describe('Extracted Location'),
+      timeFrame: z.string().describe('Extracted Time Frame'),
+    }),
   }
-}
 
-// 新增函数，用于处理是否需要继续处理下一个需求
-function shouldProcessNextDemand(state: typeof stateAnnotation.State): string {
-  const { has_parallel_demands, demands, current_demand_index } = state;
-  
-  // 检查是否有多需求并行处理
-  if (has_parallel_demands && demands && demands.length > 0) {
-    // 检查是否还有未处理的需求
-    if (current_demand_index < demands.length) {
-      console.log(`继续处理第 ${current_demand_index + 1}/${demands.length} 个需求`);
-      return "process_next_demand";
-    } else {
-      console.log("所有并行需求已处理完毕，进入正常流程");
-      return "normal_flow";
-    }
-  } else {
-    console.log("没有并行需求，进入正常流程");
-    return "normal_flow";
+  const model = new ChatOpenAI({
+    apiKey: openai_api_key,
+    modelName: openai_chat_model,
+    temperature: 1,
+    streaming: false,
+  }).bindTools([tool], { tool_choice: tool.name });
+
+  const chain = prompt.pipe(model);
+  const response = await chain.invoke({ query: query }) as AIMessage;
+
+  return {
+    messages: [response]
   }
 }
 
@@ -326,13 +240,29 @@ async function technical_grader(state: typeof stateAnnotation.State){
   const process_requirement = lastMessage.tool_calls?.[0]?.args?.Process ?? '';
   const technology_requirement = lastMessage.tool_calls?.[0]?.args?.Technology ?? '';
 
-  // Use upstream_process_info from state if available, otherwise try to extract from message
-  const process_info = upstream_process_info || 
-    (messages[messages.length - 1] as any)?.upstream_process_info || 
-    "No upstream process info found";
+  // Use all process info from all sheets instead of just the matched sheet
+  // First, get all sheet names related to processes
+  const allSheetNames = sheet_names.split(',').filter(name => name.trim().startsWith('process_'));
+  let allProcessInfo: any[] = [];
+
+  // Collect process data from all process sheets
+  for (const sheetName of allSheetNames) {
+    try {
+      const sheetData = getSheetData(
+        sheetName.trim(),
+        {},
+        ['process_UUID', 'process_name', 'location', 'flow_count']
+      );
+      allProcessInfo = [...allProcessInfo, ...sheetData];
+    } catch (error) {
+      console.error(`Error extracting data from sheet ${sheetName}:`, error);
+    }
+  }
+
+  console.log(`Collected ${allProcessInfo.length} total processes from all sheets for grading`);
 
   const prompt = ChatPromptTemplate.fromTemplate(
-    `You need to analyze each process in the upstream_process_info for technical representativeness.
+    `You need to analyze each process in the provided process list for technical representativeness.
 
     Grading criteria are as follows:
     - Grade 1:
@@ -362,19 +292,19 @@ async function technical_grader(state: typeof stateAnnotation.State){
     
     Process_requirements: {process_requirement}
     Technology_requirements: {technology_requirement}
-    upstream_process_info: {upstream_process_info}`
+    process_info: {process_info}`
   )
   
   const tool = {
     name: 'technical_grader',
-    description: 'Grading the process in upstream_process_info on technical representativeness',
+    description: 'Grading the process on technical representativeness',
     schema: z.object({
-      process_UUID: z.string().describe('UUID in upstream_process_info'),
-      process_name: z.string().describe('Name of process in upstream_process_info'),
-      location: z.string().describe('Location information of process in upstream_process_info'),
-      flow_count: z.string().describe('The selected process after matching'),
-      technical_representativeness: z.string().describe('The selected process after matching'),
-      technical_type: z.string().describe('The selected process after matching'),
+      process_UUID: z.string().describe('UUID of the process'),
+      process_name: z.string().describe('Name of the process'),
+      location: z.string().describe('Location information of the process'),
+      flow_count: z.string().describe('Flow count of the process'),
+      technical_representativeness: z.string().describe('Technical representativeness grade (1-5)'),
+      technical_type: z.string().describe('Type of technology used'),
     }),
   }
 
@@ -387,43 +317,69 @@ async function technical_grader(state: typeof stateAnnotation.State){
 
   const chain = prompt.pipe(model);
 
-  // 调用chain三次，生成三个响应
-  const response1 = await chain.invoke({ 
-    process_requirement: process_requirement,
-    technology_requirement: technology_requirement,
-    upstream_process_info: process_info
-  }) as AIMessage;
+  // Separate processes into batches if there are too many
+  const processBatches = [];
+  const batchSize = 10; // Adjust based on model token limits
   
-  const response2 = await chain.invoke({ 
-    process_requirement: process_requirement,
-    technology_requirement: technology_requirement,
-    upstream_process_info: process_info
-  }) as AIMessage;
+  for (let i = 0; i < allProcessInfo.length; i += batchSize) {
+    processBatches.push(allProcessInfo.slice(i, i + batchSize));
+  }
   
-  const response3 = await chain.invoke({ 
-    process_requirement: process_requirement,
-    technology_requirement: technology_requirement,
-    upstream_process_info: process_info
-  }) as AIMessage;
+  console.log(`Divided ${allProcessInfo.length} processes into ${processBatches.length} batches for grading`);
   
-  // 将三个响应合并到messages数组中返回
+  // Process each batch and collect results
+  const responses: AIMessage[] = [];
+  
+  for (let i = 0; i < processBatches.length; i++) {
+    const batchProcesses = processBatches[i];
+    console.log(`Grading batch ${i+1}/${processBatches.length} with ${batchProcesses.length} processes`);
+    
+    try {
+      // Call the model for each batch
+      const response = await chain.invoke({ 
+        process_requirement: process_requirement,
+        technology_requirement: technology_requirement,
+        process_info: JSON.stringify(batchProcesses)
+      }) as AIMessage;
+      
+      responses.push(response);
+    } catch (error) {
+      console.error(`Error grading batch ${i+1}:`, error);
+    }
+  }
+  
   return {
-    messages: [response1, response2, response3],
+    messages: responses,
+    all_process_grades: responses, // Store all grades for later use
   }
 }
 
 async function spatial_grader(state: typeof stateAnnotation.State){
-  const { messages, upstream_process_info } = state;
+  const { messages } = state;
   const lastMessage = messages[messages.length - 2] as AIMessage;
   const geography_requirement = lastMessage.tool_calls?.[0]?.args?.geographicLocation ?? '';
 
-  // Use upstream_process_info from state if available, otherwise try to extract from message
-  const process_info = upstream_process_info || 
-    (messages[messages.length - 1] as any)?.upstream_process_info || 
-    "No upstream process info found";
+  // Collect process data from all process sheets
+  const allSheetNames = sheet_names.split(',').filter(name => name.trim().startsWith('process_'));
+  let allProcessInfo: any[] = [];
+
+  for (const sheetName of allSheetNames) {
+    try {
+      const sheetData = getSheetData(
+        sheetName.trim(),
+        {},
+        ['process_UUID', 'process_name', 'location', 'flow_count']
+      );
+      allProcessInfo = [...allProcessInfo, ...sheetData];
+    } catch (error) {
+      console.error(`Error extracting data from sheet ${sheetName}:`, error);
+    }
+  }
+
+  console.log(`Collected ${allProcessInfo.length} total processes from all sheets for spatial grading`);
 
   const prompt = ChatPromptTemplate.fromTemplate(
-    `You need to analyze each process in the upstream_process_info for spatial representativeness.
+    `You need to analyze each process in the provided process list for spatial representativeness.
     
     Grading criteria are as follows:
     - Grade 1:
@@ -443,18 +399,18 @@ async function spatial_grader(state: typeof stateAnnotation.State){
     Use the spatial_grader tool to record your assessment for each process.
     
     Geography_requirements: {geography_requirement}
-    upstream_process_info: {upstream_process_info}`
+    process_info: {process_info}`
   )
   
   const tool = {
     name: 'spatial_grader',
-    description: 'Grading the process in upstream_process_info on spatial representativeness',
+    description: 'Grading the process on spatial representativeness',
     schema: z.object({
-      process_UUID: z.string().describe('UUID in upstream_process_info'),
-      process_name: z.string().describe('Name of process in upstream_process_info'),
-      location: z.string().describe('Location information of process'),
+      process_UUID: z.string().describe('UUID of the process'),
+      process_name: z.string().describe('Name of the process'),
+      location: z.string().describe('Location information of the process'),
       flow_count: z.string().describe('Flow count of the process'),
-      spatial_representativeness: z.string().describe('Spatial representativeness grade'),
+      spatial_representativeness: z.string().describe('Spatial representativeness grade (1-5)'),
     }),
   }
 
@@ -467,38 +423,64 @@ async function spatial_grader(state: typeof stateAnnotation.State){
 
   const chain = prompt.pipe(model);
 
-  const response1 = await chain.invoke({ 
-    geography_requirement: geography_requirement,
-    upstream_process_info: process_info
-  }) as AIMessage;
-
-  const response2 = await chain.invoke({ 
-    geography_requirement: geography_requirement,
-    upstream_process_info: process_info
-  }) as AIMessage;
-
-  const response3 = await chain.invoke({ 
-    geography_requirement: geography_requirement,
-    upstream_process_info: process_info
-  }) as AIMessage;
+  // Process in batches
+  const processBatches = [];
+  const batchSize = 10;
+  
+  for (let i = 0; i < allProcessInfo.length; i += batchSize) {
+    processBatches.push(allProcessInfo.slice(i, i + batchSize));
+  }
+  
+  const responses: AIMessage[] = [];
+  
+  for (let i = 0; i < processBatches.length; i++) {
+    const batchProcesses = processBatches[i];
+    console.log(`Spatial grading batch ${i+1}/${processBatches.length} with ${batchProcesses.length} processes`);
+    
+    try {
+      const response = await chain.invoke({ 
+        geography_requirement: geography_requirement,
+        process_info: JSON.stringify(batchProcesses)
+      }) as AIMessage;
+      
+      responses.push(response);
+    } catch (error) {
+      console.error(`Error in spatial grading batch ${i+1}:`, error);
+    }
+  }
 
   return {
-    messages: [response1, response2, response3],
+    messages: responses,
+    all_spatial_grades: responses, // Store all grades for later use
   }
 }
 
 async function time_grader(state: typeof stateAnnotation.State){
-  const { messages, upstream_process_info } = state;
+  const { messages } = state;
   const lastMessage = messages[messages.length - 2] as AIMessage;
   const time_requirement = lastMessage.tool_calls?.[0]?.args?.timeFrame ?? '';
 
-  // Use upstream_process_info from state if available, otherwise try to extract from message
-  const process_info = upstream_process_info || 
-    (messages[messages.length - 1] as any)?.upstream_process_info || 
-    "No upstream process info found";
+  // Collect process data from all process sheets
+  const allSheetNames = sheet_names.split(',').filter(name => name.trim().startsWith('process_'));
+  let allProcessInfo: any[] = [];
+
+  for (const sheetName of allSheetNames) {
+    try {
+      const sheetData = getSheetData(
+        sheetName.trim(),
+        {},
+        ['process_UUID', 'process_name', 'location', 'flow_count']
+      );
+      allProcessInfo = [...allProcessInfo, ...sheetData];
+    } catch (error) {
+      console.error(`Error extracting data from sheet ${sheetName}:`, error);
+    }
+  }
+
+  console.log(`Collected ${allProcessInfo.length} total processes from all sheets for time grading`);
 
   const prompt = ChatPromptTemplate.fromTemplate(
-    `You need to analyze each process in the upstream_process_info for time representativeness.
+    `You need to analyze each process in the provided process list for time representativeness.
     
     Grading criteria are as follows:
     - Grade 1: When the process's time frame is the same year as the time_requirement.
@@ -512,17 +494,17 @@ async function time_grader(state: typeof stateAnnotation.State){
     Use the time_grader tool to record your assessment for each process.
     
     Time_requirements: {time_requirement}
-    upstream_process_info: {upstream_process_info}`
+    process_info: {process_info}`
   )
   
   const tool = {
     name: 'time_grader',
-    description: 'Grading the process in upstream_process_info on time representativeness',
+    description: 'Grading the process on time representativeness',
     schema: z.object({
-      process_UUID: z.string().describe('UUID in upstream_process_info'),
-      process_name: z.string().describe('Name of process in upstream_process_info'),
+      process_UUID: z.string().describe('UUID of the process'),
+      process_name: z.string().describe('Name of the process'),
       flow_count: z.string().describe('Flow count of the process'),
-      time_representativeness: z.string().describe('Time representativeness grade'),
+      time_representativeness: z.string().describe('Time representativeness grade (1-5)'),
     }),
   }
 
@@ -534,55 +516,90 @@ async function time_grader(state: typeof stateAnnotation.State){
   }).bindTools([tool], { tool_choice: tool.name });
 
   const chain = prompt.pipe(model);
-  const response1 = await chain.invoke({ 
-    time_requirement: time_requirement,
-    upstream_process_info: process_info
-  }) as AIMessage;
 
-  const response2 = await chain.invoke({ 
-    time_requirement: time_requirement,
-    upstream_process_info: process_info
-  }) as AIMessage;
-
-  const response3 = await chain.invoke({ 
-    time_requirement: time_requirement,
-    upstream_process_info: process_info
-  }) as AIMessage;
+  // Process in batches
+  const processBatches = [];
+  const batchSize = 10;
+  
+  for (let i = 0; i < allProcessInfo.length; i += batchSize) {
+    processBatches.push(allProcessInfo.slice(i, i + batchSize));
+  }
+  
+  const responses: AIMessage[] = [];
+  
+  for (let i = 0; i < processBatches.length; i++) {
+    const batchProcesses = processBatches[i];
+    console.log(`Time grading batch ${i+1}/${processBatches.length} with ${batchProcesses.length} processes`);
+    
+    try {
+      const response = await chain.invoke({ 
+        time_requirement: time_requirement,
+        process_info: JSON.stringify(batchProcesses)
+      }) as AIMessage;
+      
+      responses.push(response);
+    } catch (error) {
+      console.error(`Error in time grading batch ${i+1}:`, error);
+    }
+  }
 
   return {
-    messages: [response1, response2, response3],
+    messages: responses,
+    all_time_grades: responses, // Store all grades for later use
   }
 }
 
 async function summarize_technical_grades(state: typeof stateAnnotation.State) {
   const { messages } = state;
-  const technicalResults = messages.filter(msg => 
+  
+  // Find all technical grades from the messages
+  const allTechnicalGrades = messages.filter(msg => 
     (msg as AIMessage).tool_calls?.[0]?.name === 'technical_grader'
   ) as AIMessage[];
 
+  // Group grades by process UUID to handle batch results
+  const processGrades: {[key: string]: any[]} = {};
+  
+  for (const gradeMsg of allTechnicalGrades) {
+    const gradeData = gradeMsg.tool_calls?.[0]?.args;
+    if (gradeData) {
+      const processUUID = gradeData.process_UUID;
+      if (!processGrades[processUUID]) {
+        processGrades[processUUID] = [];
+      }
+      processGrades[processUUID].push(gradeData);
+    }
+  }
+
+  // For each process, summarize its grades
+  const allSummaries: AIMessage[] = [];
+  const processUUIDs = Object.keys(processGrades);
+  
+  console.log(`Summarizing technical grades for ${processUUIDs.length} processes`);
+  
   const prompt = ChatPromptTemplate.fromTemplate(
-    `You are tasked with summarizing the results from three technical graders.
+    `You are tasked with summarizing the technical representativeness grades for a process.
     
     When summarizing the ratings:
     - If the technical representativeness ratings are consistent, use that as the final rating
     - If the ratings are inconsistent, use the most frequent result
     - If there are multiple most frequent results, use your judgment to select the most appropriate one
     
-    Please analyze the following outputs and use the technical_summary tool to record your final assessment.
-
-    Technical grader output 1: {output1}
-    Technical grader output 2: {output2}
-    Technical grader output 3: {output3}`
+    Process UUID: {process_uuid}
+    Process Name: {process_name}
+    Technical grades to summarize: {grades}
+    
+    Use the technical_summary tool to record your final assessment.`
   );
   
   const tool = {
     name: 'technical_summary',
     description: 'Summarize technical grading results',
     schema: z.object({
-      process_UUID: z.string().describe('UUID in upstream_process_info'),
-      process_name: z.string().describe('Name of process in upstream_process_info'),
+      process_UUID: z.string().describe('UUID of the process'),
+      process_name: z.string().describe('Name of the process'),
       flow_count: z.string().describe('Flow count of the process'),
-      final_technical_representativeness: z.string().describe('Final technical grade'),
+      final_technical_representativeness: z.string().describe('Final technical grade (1-5)'),
       other_results: z.array(z.string()).describe('Other grades that were considered')
     }),
   };
@@ -596,51 +613,84 @@ async function summarize_technical_grades(state: typeof stateAnnotation.State) {
 
   const chain = prompt.pipe(model);
   
-  const output1 = technicalResults[0]?.tool_calls?.[0]?.args || "No data";
-  const output2 = technicalResults[1]?.tool_calls?.[0]?.args || "No data";
-  const output3 = technicalResults[2]?.tool_calls?.[0]?.args || "No data";
-  
-  const response = await chain.invoke({ 
-    output1: JSON.stringify(output1),
-    output2: JSON.stringify(output2),
-    output3: JSON.stringify(output3)
-  }) as AIMessage;
+  // Process each UUID in batches if needed
+  for (const processUUID of processUUIDs) {
+    const grades = processGrades[processUUID];
+    if (grades.length === 0) continue;
+    
+    try {
+      const processName = grades[0].process_name || "Unknown Process";
+      
+      const response = await chain.invoke({ 
+        process_uuid: processUUID,
+        process_name: processName,
+        grades: JSON.stringify(grades)
+      }) as AIMessage;
+      
+      allSummaries.push(response);
+    } catch (error) {
+      console.error(`Error summarizing technical grades for process ${processUUID}:`, error);
+    }
+  }
 
   return {
-    messages: [response],
+    messages: allSummaries,
+    all_technical_summaries: allSummaries,
   };
 }
 
 async function summarize_spatial_grades(state: typeof stateAnnotation.State) {
   const { messages } = state;
-  const spatialResults = messages.filter(msg => 
+  
+  // Find all spatial grades from the messages
+  const allSpatialGrades = messages.filter(msg => 
     (msg as AIMessage).tool_calls?.[0]?.name === 'spatial_grader'
   ) as AIMessage[];
 
+  // Group grades by process UUID
+  const processGrades: {[key: string]: any[]} = {};
+  
+  for (const gradeMsg of allSpatialGrades) {
+    const gradeData = gradeMsg.tool_calls?.[0]?.args;
+    if (gradeData) {
+      const processUUID = gradeData.process_UUID;
+      if (!processGrades[processUUID]) {
+        processGrades[processUUID] = [];
+      }
+      processGrades[processUUID].push(gradeData);
+    }
+  }
+
+  // For each process, summarize its grades
+  const allSummaries: AIMessage[] = [];
+  const processUUIDs = Object.keys(processGrades);
+  
+  console.log(`Summarizing spatial grades for ${processUUIDs.length} processes`);
+  
   const prompt = ChatPromptTemplate.fromTemplate(
-    `You are tasked with summarizing the results from three spatial graders.
+    `You are tasked with summarizing the spatial representativeness grades for a process.
     
     When summarizing the ratings:
     - If the spatial representativeness ratings are consistent, use that as the final rating
     - If the ratings are inconsistent, use the most frequent result
     - If there are multiple most frequent results, use your judgment to select the most appropriate one
     
-    Please analyze the following outputs and use the spatial_summary tool to record your final assessment.
-
-    Spatial grader output 1: {output1}
-    Spatial grader output 2: {output2}
-    Spatial grader output 3: {output3}`
+    Process UUID: {process_uuid}
+    Process Name: {process_name}
+    Spatial grades to summarize: {grades}
+    
+    Use the spatial_summary tool to record your final assessment.`
   );
   
   const tool = {
     name: 'spatial_summary',
     description: 'Summarize spatial grading results',
     schema: z.object({
-      process_UUID: z.string().describe('UUID in upstream_process_info'),
-      process_name: z.string().describe('Name of process in upstream_process_info'),
-      location: z.string().describe('Location information of process'),
+      process_UUID: z.string().describe('UUID of the process'),
+      process_name: z.string().describe('Name of the process'),
+      location: z.string().describe('Location information of the process'),
       flow_count: z.string().describe('Flow count of the process'),
-      final_spatial_representativeness: z.string().describe('Final spatial grade'),
+      final_spatial_representativeness: z.string().describe('Final spatial grade (1-5)'),
       other_results: z.array(z.string()).describe('Other grades that were considered')
     }),
   };
@@ -654,50 +704,83 @@ async function summarize_spatial_grades(state: typeof stateAnnotation.State) {
 
   const chain = prompt.pipe(model);
   
-  const output1 = spatialResults[0]?.tool_calls?.[0]?.args || "No data";
-  const output2 = spatialResults[1]?.tool_calls?.[0]?.args || "No data";
-  const output3 = spatialResults[2]?.tool_calls?.[0]?.args || "No data";
-  
-  const response = await chain.invoke({ 
-    output1: JSON.stringify(output1),
-    output2: JSON.stringify(output2),
-    output3: JSON.stringify(output3)
-  }) as AIMessage;
+  for (const processUUID of processUUIDs) {
+    const grades = processGrades[processUUID];
+    if (grades.length === 0) continue;
+    
+    try {
+      const processName = grades[0].process_name || "Unknown Process";
+      const location = grades[0].location || "Unknown Location";
+      
+      const response = await chain.invoke({ 
+        process_uuid: processUUID,
+        process_name: processName,
+        grades: JSON.stringify(grades)
+      }) as AIMessage;
+      
+      allSummaries.push(response);
+    } catch (error) {
+      console.error(`Error summarizing spatial grades for process ${processUUID}:`, error);
+    }
+  }
 
   return {
-    messages: [response],
+    messages: allSummaries,
+    all_spatial_summaries: allSummaries,
   };
 }
 
 async function summarize_time_grades(state: typeof stateAnnotation.State) {
   const { messages } = state;
-  const timeResults = messages.filter(msg => 
+  
+  // Find all time grades from the messages
+  const allTimeGrades = messages.filter(msg => 
     (msg as AIMessage).tool_calls?.[0]?.name === 'time_grader'
   ) as AIMessage[];
 
+  // Group grades by process UUID
+  const processGrades: {[key: string]: any[]} = {};
+  
+  for (const gradeMsg of allTimeGrades) {
+    const gradeData = gradeMsg.tool_calls?.[0]?.args;
+    if (gradeData) {
+      const processUUID = gradeData.process_UUID;
+      if (!processGrades[processUUID]) {
+        processGrades[processUUID] = [];
+      }
+      processGrades[processUUID].push(gradeData);
+    }
+  }
+
+  // For each process, summarize its grades
+  const allSummaries: AIMessage[] = [];
+  const processUUIDs = Object.keys(processGrades);
+  
+  console.log(`Summarizing time grades for ${processUUIDs.length} processes`);
+  
   const prompt = ChatPromptTemplate.fromTemplate(
-    `You are tasked with summarizing the results from three time graders.
+    `You are tasked with summarizing the time representativeness grades for a process.
     
     When summarizing the ratings:
     - If the time representativeness ratings are consistent, use that as the final rating
     - If the ratings are inconsistent, use the most frequent result
     - If there are multiple most frequent results, use your judgment to select the most appropriate one
     
-    Please analyze the following outputs and use the time_summary tool to record your final assessment.
-
-    Time grader output 1: {output1}
-    Time grader output 2: {output2}
-    Time grader output 3: {output3}`
+    Process UUID: {process_uuid}
+    Process Name: {process_name}
+    Time grades to summarize: {grades}
+    
+    Use the time_summary tool to record your final assessment.`
   );
   
   const tool = {
     name: 'time_summary',
     description: 'Summarize time grading results',
     schema: z.object({
-      process_UUID: z.string().describe('UUID in upstream_process_info'),
-      process_name: z.string().describe('Name of process in upstream_process_info'),
+      process_UUID: z.string().describe('UUID of the process'),
+      process_name: z.string().describe('Name of the process'),
       flow_count: z.string().describe('Flow count of the process'),
-      final_time_representativeness: z.string().describe('Final time grade'),
+      final_time_representativeness: z.string().describe('Final time grade (1-5)'),
       other_results: z.array(z.string()).describe('Other grades that were considered')
     }),
   };
@@ -711,61 +794,133 @@ async function summarize_time_grades(state: typeof stateAnnotation.State) {
 
   const chain = prompt.pipe(model);
   
-  const output1 = timeResults[0]?.tool_calls?.[0]?.args || "No data";
-  const output2 = timeResults[1]?.tool_calls?.[0]?.args || "No data";
-  const output3 = timeResults[2]?.tool_calls?.[0]?.args || "No data";
-  
-  const response = await chain.invoke({ 
-    output1: JSON.stringify(output1),
-    output2: JSON.stringify(output2),
-    output3: JSON.stringify(output3)
-  }) as AIMessage;
+  for (const processUUID of processUUIDs) {
+    const grades = processGrades[processUUID];
+    if (grades.length === 0) continue;
+    
+    try {
+      const processName = grades[0].process_name || "Unknown Process";
+      
+      const response = await chain.invoke({ 
+        process_uuid: processUUID,
+        process_name: processName,
+        grades: JSON.stringify(grades)
+      }) as AIMessage;
+      
+      allSummaries.push(response);
+    } catch (error) {
+      console.error(`Error summarizing time grades for process ${processUUID}:`, error);
+    }
+  }
 
   return {
-    messages: [response],
+    messages: allSummaries,
+    all_time_summaries: allSummaries,
   };
 }
 
 async function final_summarizer(state: typeof stateAnnotation.State) {
   const { messages } = state;
   
-  // Find the summary messages
-  const technicalSummary = messages.find(msg => 
+  // Find all the summary messages by type
+  const technicalSummaries = messages.filter(msg => 
     (msg as AIMessage).tool_calls?.some(tool => tool.name === 'technical_summary')
-  ) as AIMessage;
+  ) as AIMessage[];
   
-  const spatialSummary = messages.find(msg => 
+  const spatialSummaries = messages.filter(msg => 
     (msg as AIMessage).tool_calls?.some(tool => tool.name === 'spatial_summary')
-  ) as AIMessage;
+  ) as AIMessage[];
   
-  const timeSummary = messages.find(msg => 
+  const timeSummaries = messages.filter(msg => 
     (msg as AIMessage).tool_calls?.some(tool => tool.name === 'time_summary')
-  ) as AIMessage;
+  ) as AIMessage[];
 
+  // Create a mapping of all processes and their grades
+  const allProcesses: {[key: string]: any} = {};
+  
+  // Add technical grades
+  for (const summary of technicalSummaries) {
+    const data = summary.tool_calls?.[0]?.args;
+    if (data && data.process_UUID) {
+      if (!allProcesses[data.process_UUID]) {
+        allProcesses[data.process_UUID] = {
+          process_UUID: data.process_UUID,
+          process_name: data.process_name,
+          flow_count: data.flow_count,
+        };
+      }
+      
+      allProcesses[data.process_UUID].technical_grade = data.final_technical_representativeness;
+    }
+  }
+  
+  // Add spatial grades
+  for (const summary of spatialSummaries) {
+    const data = summary.tool_calls?.[0]?.args;
+    if (data && data.process_UUID) {
+      if (!allProcesses[data.process_UUID]) {
+        allProcesses[data.process_UUID] = {
+          process_UUID: data.process_UUID,
+          process_name: data.process_name,
+          location: data.location,
+          flow_count: data.flow_count,
+        };
+      } else if (data.location) {
+        allProcesses[data.process_UUID].location = data.location;
+      }
+      
+      allProcesses[data.process_UUID].spatial_grade = data.final_spatial_representativeness;
+    }
+  }
+  
+  // Add time grades
+  for (const summary of timeSummaries) {
+    const data = summary.tool_calls?.[0]?.args;
+    if (data && data.process_UUID) {
+      if (!allProcesses[data.process_UUID]) {
+        allProcesses[data.process_UUID] = {
+          process_UUID: data.process_UUID,
+          process_name: data.process_name,
+          flow_count: data.flow_count,
+        };
+      }
+      
+      allProcesses[data.process_UUID].time_grade = data.final_time_representativeness;
+    }
+  }
+
+  // Create final summaries for each process
+  const finalSummaries: AIMessage[] = [];
+  const processUUIDs = Object.keys(allProcesses);
+  
+  console.log(`Creating final summaries for ${processUUIDs.length} processes`);
+  
   const prompt = ChatPromptTemplate.fromTemplate(
     `You are a professional in the field of LCA, specializing in summarizing representativeness of a unit process.
-
-    You have been provided with individual summaries for technical, spatial, and time representativeness.
     
-    Please analyze these summaries and create a comprehensive assessment that combines all three dimensions of representativeness.
+    Please analyze the provided data and create a comprehensive assessment that combines technical, spatial, and time representativeness for this process.
     Use the final_summary tool to provide your assessment.
-
-    Technical Summary: {technicalSummary}
-    Spatial Summary: {spatialSummary}
-    Time Summary: {timeSummary}`
+    
+    Process UUID: {process_uuid}
+    Process Name: {process_name}
+    Location: {location}
+    Technical Grade: {technical_grade}
+    Spatial Grade: {spatial_grade}
+    Time Grade: {time_grade}
+    Flow Count: {flow_count}`
   );
   
   const tool = {
     name: 'final_summary',
     description: 'Summarize overall representativeness results',
     schema: z.object({
-      process_UUID: z.string().describe('UUID in upstream_process_info'),
-      process_name: z.string().describe('Name of process in upstream_process_info'),
-      location: z.string().describe('Location information of process'),
+      process_UUID: z.string().describe('UUID of the process'),
+      process_name: z.string().describe('Name of the process'),
+      location: z.string().describe('Location information of the process'),
       flow_count: z.string().describe('Flow count of the process'),
-      technical_representativeness: z.string().describe('Technical representativeness grade'),
-      spatial_representativeness: z.string().describe('Spatial representativeness grade'),
-      time_representativeness: z.string().describe('Time representativeness grade')
+      technical_representativeness: z.string().describe('Technical representativeness grade (1-5)'),
+      spatial_representativeness: z.string().describe('Spatial representativeness grade (1-5)'),
+      time_representativeness: z.string().describe('Time representativeness grade (1-5)')
     }),
   };
 
@@ -778,18 +933,33 @@ async function final_summarizer(state: typeof stateAnnotation.State) {
 
   const chain = prompt.pipe(model);
   
-  const technical = technicalSummary?.tool_calls?.[0]?.args || "No data";
-  const spatial = spatialSummary?.tool_calls?.[0]?.args || "No data";
-  const time = timeSummary?.tool_calls?.[0]?.args || "No data";
-  
-  const response = await chain.invoke({ 
-    technicalSummary: JSON.stringify(technical),
-    spatialSummary: JSON.stringify(spatial),
-    timeSummary: JSON.stringify(time)
-  }) as AIMessage;
+  for (const processUUID of processUUIDs) {
+    const processData = allProcesses[processUUID];
+    if (!processData.technical_grade || !processData.spatial_grade || !processData.time_grade) {
+      console.log(`Skipping process ${processUUID} due to missing grades`);
+      continue;
+    }
+    
+    try {
+      const response = await chain.invoke({ 
+        process_uuid: processUUID,
+        process_name: processData.process_name || "Unknown Process",
+        location: processData.location || "Unknown Location",
+        technical_grade: processData.technical_grade || "N/A",
+        spatial_grade: processData.spatial_grade || "N/A",
+        time_grade: processData.time_grade || "N/A",
+        flow_count: processData.flow_count || "0"
+      }) as AIMessage;
+      
+      finalSummaries.push(response);
+    } catch (error) {
+      console.error(`Error creating final summary for process ${processUUID}:`, error);
+    }
+  }
 
   return {
-    messages: [response],
+    messages: finalSummaries,
+    all_process_summaries: finalSummaries, // Store all summaries for later steps
   };
 }
 
@@ -1267,10 +1437,7 @@ async function workflow_restarter(state: typeof stateAnnotation.State) {
     console.log("没有生成新的需求，结束工作流程");
     return {
       messages: [response],
-      has_parallel_demands: false,
       demands: [],
-      current_demand_index: 0,
-      iteration_count: 1 // 增加迭代计数
     };
   }
 
@@ -1284,153 +1451,8 @@ async function workflow_restarter(state: typeof stateAnnotation.State) {
   // 返回更新后的状态
   return {
     messages: [response],
-    has_parallel_demands: true,
     demands: demandMessages,
-    current_demand_index: 0,
-    iteration_count: 1 // 增加迭代计数
   };
-}
-
-// Decision functions for conditional routing
-function shouldContinueBoundaryAnalysis(state: typeof stateAnnotation.State): string {
-  const { messages } = state;
-  
-  // 检查历史迭代次数，防止无限循环
-  // 计算已经进行的迭代次数，如果超过限制，则终止工作流
-  const iterationCount = messages.filter(msg => 
-    (msg as AIMessage).tool_calls?.some(tool => tool.name === 'demand_extractor')
-  ).length;
-  
-  if (iterationCount > 10) {
-    console.log("已达到最大迭代次数限制 (10次)，终止工作流");
-    return "end_workflow";
-  }
-  
-  // Find the boundary judger output
-  const judgerOutput = messages.find(msg => 
-    (msg as AIMessage).tool_calls?.some(tool => tool.name === 'boundary_judger')
-  ) as AIMessage;
-  
-  if (judgerOutput) {
-    try {
-      const whether_reach_cradle = judgerOutput.tool_calls?.[0]?.args?.whether_reach_cradle;
-      console.log("Boundary judger result:", whether_reach_cradle);
-      
-      // 严格检查返回值，确保它是有效的 Yes 或 No
-      if (whether_reach_cradle === "Yes") {
-        console.log("已达到生命周期的'摇篮'阶段，终止工作流");
-        return "end_workflow";
-      } else {
-        console.log("尚未达到生命周期的'摇篮'阶段，继续分析");
-        return "continue_analysis";
-      }
-    } catch (error) {
-      console.error("处理boundary judger输出时出错:", error);
-      // 在出现错误时默认终止，避免无限循环
-      return "end_workflow";
-    }
-  }
-  
-  // 如果找不到有效结果，默认终止工作流
-  console.log("无法找到boundary judger的有效输出，终止工作流");
-  return "end_workflow";
-}
-
-function shouldContinueFlowAnalysis(state: typeof stateAnnotation.State): string {
-  const { messages } = state;
-  
-  // 检查历史迭代次数，防止无限循环
-  // 计算已经进行的迭代次数，如果超过限制，则终止工作流
-  const iterationCount = messages.filter(msg => 
-    (msg as AIMessage).tool_calls?.some(tool => tool.name === 'flow_filter')
-  ).length;
-  
-  if (iterationCount > 10) {
-    console.log("已达到flow filter最大迭代次数限制 (10次)，终止工作流");
-    return "end_workflow";
-  }
-  
-  // Find the flow filter output
-  const filterOutput = messages.find(msg => 
-    (msg as AIMessage).tool_calls?.some(tool => tool.name === 'flow_filter')
-  ) as AIMessage;
-  
-  if (filterOutput) {
-    try {
-      const args = filterOutput.tool_calls?.[0]?.args;
-      const allElementaryFlows = args?.all_elementary_flows || false;
-      const nonElementaryFlows = args?.non_elementary_flows || [];
-      
-      console.log("Flow filter result:", { 
-        allElementaryFlows, 
-        nonElementaryFlowsCount: nonElementaryFlows.length 
-      });
-      
-      // 如果所有流都是基本流，或者非基本流数量为0，则终止工作流
-      if (allElementaryFlows === true || nonElementaryFlows.length === 0) {
-        console.log("所有流都是基本流或没有非基本流，终止工作流");
-        return "end_workflow";
-      } else {
-        console.log("存在非基本流需要进一步分析，继续工作流");
-        return "continue_workflow";
-      }
-    } catch (error) {
-      console.error("处理flow filter输出时出错:", error);
-      // 在出现错误时默认终止，避免无限循环
-      return "end_workflow";
-    }
-  }
-  
-  // 如果找不到有效的flow filter输出，默认终止工作流
-  console.log("无法找到flow filter的有效输出，终止工作流");
-  return "end_workflow";
-}
-
-function shouldContinueFlowJudger(state: typeof stateAnnotation.State): string {
-  const { messages } = state;
-  
-  // 检查历史迭代次数，防止无限循环
-  // 计算已经进行的迭代次数，如果超过限制，则终止工作流
-  const iterationCount = messages.filter(msg => 
-    (msg as AIMessage).tool_calls?.some(tool => tool.name === 'flow_judger')
-  ).length;
-  
-  if (iterationCount > 10) {
-    console.log("已达到flow judger最大迭代次数限制 (10次)，终止工作流");
-    return "end_workflow";
-  }
-  
-  // Find the flow judger output
-  const judgerOutput = messages.find(msg => 
-    (msg as AIMessage).tool_calls?.some(tool => tool.name === 'flow_judger')
-  ) as AIMessage;
-  
-  if (judgerOutput) {
-    try {
-      const args = judgerOutput.tool_calls?.[0]?.args;
-      const emptyResult = args?.empty_result;
-      const combinedFlows = args?.combined_flows || [];
-      
-      console.log("Flow judger result:", { emptyResult, flowsCount: combinedFlows.length });
-      
-      // 检查emptyResult标志或combinedFlows长度为0
-      if (emptyResult === true || combinedFlows.length === 0) {
-        console.log("合并后的流分析结果为空，终止工作流");
-        return "end_workflow";
-      } else {
-        console.log("存在合并后的流分析结果，继续工作流");
-        return "continue_workflow";
-      }
-    } catch (error) {
-      console.error("处理flow judger输出时出错:", error);
-      // 在出现错误时默认终止，避免无限循环
-      return "end_workflow";
-    }
-  }
-  
-  // 如果找不到有效的flow judger输出，默认终止工作流
-  console.log("无法找到flow judger的有效输出，终止工作流");
-  return "end_workflow";
 }
 
 // Main workflow
@@ -1452,22 +1474,8 @@ const workflow = new StateGraph(stateAnnotation)
     .addNode("flow_judger", flow_judger)
     .addNode("flow_filter", flow_filter)
     .addNode("workflow_restarter", workflow_restarter)
-    
-    // Core workflow path
     .addEdge('__start__', "demand_extractor")
-    
-    // 添加 demand_extractor 的条件路由，处理多需求的并发
-    .addConditionalEdges(
-        "demand_extractor", 
-        shouldProcessNextDemand,
-        {
-            // 如果还有更多需求要处理，循环回 demand_extractor
-            "process_next_demand": "demand_extractor", 
-            // 如果所有需求都处理完毕或者是单一需求，进入正常流程
-            "normal_flow": "title_matcher"
-        }
-    )
-    
+    .addEdge("demand_extractor", "title_matcher")
     .addEdge("title_matcher", "technical_grader")
     .addEdge("title_matcher", "spatial_grader")
     .addEdge("title_matcher", "time_grader")
@@ -1479,48 +1487,16 @@ const workflow = new StateGraph(stateAnnotation)
     .addEdge("time_summary", "final_summary")
     .addEdge("final_summary", "heterogeneity_evaluator")
     .addEdge("heterogeneity_evaluator", "process_selector")
-    
-    // Boundary delineating chain with conditional paths
     .addEdge("process_selector", "boundary_judger")
-    // Decision point: If process reaches cradle, end workflow
-    .addConditionalEdges(
-        "boundary_judger", 
-        shouldContinueBoundaryAnalysis, 
-        {
-            "end_workflow": "__end__",
-            "continue_analysis": "industry_analyst"
-        }
-    )
-    
-    // Run three parallel flow analyst instances
+    .addEdge("process_selector", "industry_analyst")
+    .addEdge("process_selector", "flow_analyst")
     .addEdge("industry_analyst", "flow_analyst")
     .addEdge("industry_analyst", "flow_analyst") 
     .addEdge("industry_analyst", "flow_analyst")
-    
-    // Combine results from flow analysts
     .addEdge("flow_analyst", "flow_judger")
-    
-    // Decision point: If combined results are empty, end workflow
-    .addConditionalEdges(
-        "flow_judger",
-        shouldContinueFlowJudger,
-        {
-            "end_workflow": "__end__",
-            "continue_workflow": "flow_filter"
-        }
-    )
-    
-    // Decision point: If all flows are elementary, end workflow
-    .addConditionalEdges(
-        "flow_filter",
-        shouldContinueFlowAnalysis,
-        {
-            "end_workflow": "__end__",
-            "continue_workflow": "workflow_restarter"
-        }
-    )
-    
-    // Restart the workflow with new demands, 现在会生成多个并行需求
-    .addEdge("workflow_restarter", "demand_extractor");
+    .addEdge("flow_judger", "flow_filter")
+    .addEdge("flow_filter", "workflow_restarter")
+    .addEdge("boundary_judger", "__end__")
+    .addEdge("workflow_restarter", "__end__");
 
 export const graph = workflow.compile();
