@@ -119,19 +119,34 @@ function extractSheetToJson(
         // 提取指定的列，如果extractColumns为undefined，则提取所有列
         if (extractColumns) {
             try {
-                const missingColumns = extractColumns.filter(col => 
-                    !data[0] || !(col in data[0])
-                );
-                
-                if (missingColumns.length > 0) {
-                    console.error(`提取列不存在: ${missingColumns.join(', ')}`);
-                    return JSON.stringify({ error: `以下提取列不存在: ${missingColumns.join(', ')}`, data: [] });
+                // 检查数组是否为空
+                if (data.length === 0) {
+                    console.error(`工作表为空，无法提取列`);
+                    return JSON.stringify({ error: `工作表为空，无法提取列`, data: [] });
                 }
                 
+                // 检查是否有完全缺失的列（所有记录中都不存在）
+                const completelyMissingColumns = extractColumns.filter(col => 
+                    data.every(row => !(col in row))
+                );
+                
+                if (completelyMissingColumns.length > 0) {
+                    console.error(`以下列在所有记录中都不存在: ${completelyMissingColumns.join(', ')}`);
+                    console.log(`可用的列: ${Object.keys(data[0]).join(', ')}`);
+                    // 列出所有记录中的唯一列名
+                    const allColumns = new Set<string>();
+                    data.forEach(row => {
+                        Object.keys(row).forEach(col => allColumns.add(col));
+                    });
+                    console.log(`所有记录中的列: ${Array.from(allColumns).join(', ')}`);
+                }
+                
+                // 即使有列缺失，也继续处理，只是用默认值填充
                 data = data.map(row => {
                     const newRow: { [key: string]: any } = {};
                     extractColumns.forEach(col => {
-                        newRow[col] = row[col];
+                        // 如果列不存在，设置为null或其他默认值
+                        newRow[col] = col in row ? row[col] : null;
                     });
                     return newRow;
                 });

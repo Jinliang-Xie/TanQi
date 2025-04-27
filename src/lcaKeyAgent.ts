@@ -118,6 +118,26 @@ async function title_matcher(state: typeof stateAnnotation.State){
   const lastMessage = messages[messages.length - 1] as AIMessage;
   const process_requirement = lastMessage.tool_calls?.[0]?.args?.Process ?? '';
 
+  // 首先列出所有可用的工作表
+  try {
+    console.log('=================== DEBUG INFO ===================');
+    console.log('所有可用的Excel工作表:', sheet_names);
+    
+    // 尝试读取所有工作表的记录数量
+    const sheetNamesList = sheet_names.split(',').map(name => name.trim());
+    for (const sheetName of sheetNamesList) {
+      try {
+        const sheetData = utils.loadExcel(file_path, sheetName);
+        console.log(`工作表 "${sheetName}" 包含 ${sheetData.length} 条记录`);
+      } catch (error) {
+        console.error(`无法读取工作表 "${sheetName}": ${error}`);
+      }
+    }
+    console.log('=================== END DEBUG INFO ===================');
+  } catch (error) {
+    console.error('调试过程中出错:', error);
+  }
+
   const prompt = ChatPromptTemplate.fromTemplate(
     `You are acting as a title matcher for selecting relevant sheets from an Excel file based on the given product specification. Your task is to identify the two most appropriate sheet names that are semantically consistent with the provided product specification.
     
@@ -166,6 +186,16 @@ async function title_matcher(state: typeof stateAnnotation.State){
 
     console.log(`Selected sheets: Process=${selected_process_sheet}, Flow=${selected_flow_sheet}`);
 
+    // 先检查所选工作表的完整数据
+    try {
+      const allProcessData = utils.loadExcel(file_path, selected_process_sheet);
+      console.log(`完整的工作表 ${selected_process_sheet} 数据: ${allProcessData.length} 条记录`);
+      // 显示前三条记录的关键字段
+      console.log(`工作表数据示例 (前3条): `, allProcessData.slice(0, 3));
+    } catch (error) {
+      console.error(`读取完整工作表数据失败: ${error}`);
+    }
+
     // Extract the actual data from the selected sheets
     const upstream_process_info_str = utils.extractSheetToJson(
       file_path,
@@ -173,6 +203,22 @@ async function title_matcher(state: typeof stateAnnotation.State){
       {},
       ['process_UUID', 'process_name', 'location', 'flow_count']
     );
+    
+    // 添加详细日志，检查原始数据长度
+    try {
+      const rawProcessData = JSON.parse(upstream_process_info_str);
+      console.log(`Raw process data from Excel: ${rawProcessData.length} records found`);
+      
+      // 检查每条记录的关键字段
+      if (rawProcessData.length > 0) {
+        console.log(`First record sample:`, rawProcessData[0]);
+        if (rawProcessData.length < 10) {
+          console.log(`All records:`, rawProcessData);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to parse raw process data for debugging:", error);
+    }
     
     const upstream_flow_info_str = utils.extractSheetToJson(
       file_path,
@@ -240,26 +286,16 @@ async function technical_grader(state: typeof stateAnnotation.State){
   const process_requirement = lastMessage.tool_calls?.[0]?.args?.Process ?? '';
   const technology_requirement = lastMessage.tool_calls?.[0]?.args?.Technology ?? '';
 
-  // Use all process info from all sheets instead of just the matched sheet
-  // First, get all sheet names related to processes
-  const allSheetNames = sheet_names.split(',').filter(name => name.trim().startsWith('process_'));
-  let allProcessInfo: any[] = [];
-
-  // Collect process data from all process sheets
-  for (const sheetName of allSheetNames) {
-    try {
-      const sheetData = getSheetData(
-        sheetName.trim(),
-        {},
-        ['process_UUID', 'process_name', 'location', 'flow_count']
-      );
-      allProcessInfo = [...allProcessInfo, ...sheetData];
-    } catch (error) {
-      console.error(`Error extracting data from sheet ${sheetName}:`, error);
-    }
+  // Use the filtered data from title_matcher instead of recollecting all data
+  if (!upstream_process_info || !Array.isArray(upstream_process_info) || upstream_process_info.length === 0) {
+    console.error("No valid upstream process information found from title_matcher");
+    return {
+      messages: [new AIMessage({ content: "No valid upstream process information found" })],
+      all_process_grades: []
+    };
   }
 
-  console.log(`Collected ${allProcessInfo.length} total processes from all sheets for grading`);
+  console.log(`Using ${upstream_process_info.length} filtered processes from title_matcher for technical grading`);
 
   const prompt = ChatPromptTemplate.fromTemplate(
     `You need to analyze each process in the provided process list for technical representativeness.
@@ -317,15 +353,15 @@ async function technical_grader(state: typeof stateAnnotation.State){
 
   const chain = prompt.pipe(model);
 
-  // Separate processes into batches if there are too many
+  // Process filtered data in batches
   const processBatches = [];
-  const batchSize = 10; // Adjust based on model token limits
+  const batchSize = 10;
   
-  for (let i = 0; i < allProcessInfo.length; i += batchSize) {
-    processBatches.push(allProcessInfo.slice(i, i + batchSize));
+  for (let i = 0; i < upstream_process_info.length; i += batchSize) {
+    processBatches.push(upstream_process_info.slice(i, i + batchSize));
   }
   
-  console.log(`Divided ${allProcessInfo.length} processes into ${processBatches.length} batches for grading`);
+  console.log(`Divided ${upstream_process_info.length} filtered processes into ${processBatches.length} batches for grading`);
   
   // Process each batch and collect results
   const responses: AIMessage[] = [];
@@ -350,33 +386,25 @@ async function technical_grader(state: typeof stateAnnotation.State){
   
   return {
     messages: responses,
-    all_process_grades: responses, // Store all grades for later use
+    all_process_grades: responses,
   }
 }
 
 async function spatial_grader(state: typeof stateAnnotation.State){
-  const { messages } = state;
+  const { messages, upstream_process_info } = state;
   const lastMessage = messages[messages.length - 2] as AIMessage;
   const geography_requirement = lastMessage.tool_calls?.[0]?.args?.geographicLocation ?? '';
 
-  // Collect process data from all process sheets
-  const allSheetNames = sheet_names.split(',').filter(name => name.trim().startsWith('process_'));
-  let allProcessInfo: any[] = [];
-
-  for (const sheetName of allSheetNames) {
-    try {
-      const sheetData = getSheetData(
-        sheetName.trim(),
-        {},
-        ['process_UUID', 'process_name', 'location', 'flow_count']
-      );
-      allProcessInfo = [...allProcessInfo, ...sheetData];
-    } catch (error) {
-      console.error(`Error extracting data from sheet ${sheetName}:`, error);
-    }
+  // Use the filtered data from title_matcher
+  if (!upstream_process_info || !Array.isArray(upstream_process_info) || upstream_process_info.length === 0) {
+    console.error("No valid upstream process information found from title_matcher");
+    return {
+      messages: [new AIMessage({ content: "No valid upstream process information found" })],
+      all_spatial_grades: []
+    };
   }
 
-  console.log(`Collected ${allProcessInfo.length} total processes from all sheets for spatial grading`);
+  console.log(`Using ${upstream_process_info.length} filtered processes from title_matcher for spatial grading`);
 
   const prompt = ChatPromptTemplate.fromTemplate(
     `You need to analyze each process in the provided process list for spatial representativeness.
@@ -423,12 +451,12 @@ async function spatial_grader(state: typeof stateAnnotation.State){
 
   const chain = prompt.pipe(model);
 
-  // Process in batches
+  // Process filtered data in batches
   const processBatches = [];
   const batchSize = 10;
   
-  for (let i = 0; i < allProcessInfo.length; i += batchSize) {
-    processBatches.push(allProcessInfo.slice(i, i + batchSize));
+  for (let i = 0; i < upstream_process_info.length; i += batchSize) {
+    processBatches.push(upstream_process_info.slice(i, i + batchSize));
   }
   
   const responses: AIMessage[] = [];
@@ -451,33 +479,25 @@ async function spatial_grader(state: typeof stateAnnotation.State){
 
   return {
     messages: responses,
-    all_spatial_grades: responses, // Store all grades for later use
+    all_spatial_grades: responses,
   }
 }
 
 async function time_grader(state: typeof stateAnnotation.State){
-  const { messages } = state;
+  const { messages, upstream_process_info } = state;
   const lastMessage = messages[messages.length - 2] as AIMessage;
   const time_requirement = lastMessage.tool_calls?.[0]?.args?.timeFrame ?? '';
 
-  // Collect process data from all process sheets
-  const allSheetNames = sheet_names.split(',').filter(name => name.trim().startsWith('process_'));
-  let allProcessInfo: any[] = [];
-
-  for (const sheetName of allSheetNames) {
-    try {
-      const sheetData = getSheetData(
-        sheetName.trim(),
-        {},
-        ['process_UUID', 'process_name', 'location', 'flow_count']
-      );
-      allProcessInfo = [...allProcessInfo, ...sheetData];
-    } catch (error) {
-      console.error(`Error extracting data from sheet ${sheetName}:`, error);
-    }
+  // Use the filtered data from title_matcher
+  if (!upstream_process_info || !Array.isArray(upstream_process_info) || upstream_process_info.length === 0) {
+    console.error("No valid upstream process information found from title_matcher");
+    return {
+      messages: [new AIMessage({ content: "No valid upstream process information found" })],
+      all_time_grades: []
+    };
   }
 
-  console.log(`Collected ${allProcessInfo.length} total processes from all sheets for time grading`);
+  console.log(`Using ${upstream_process_info.length} filtered processes from title_matcher for time grading`);
 
   const prompt = ChatPromptTemplate.fromTemplate(
     `You need to analyze each process in the provided process list for time representativeness.
@@ -517,12 +537,12 @@ async function time_grader(state: typeof stateAnnotation.State){
 
   const chain = prompt.pipe(model);
 
-  // Process in batches
+  // Process filtered data in batches
   const processBatches = [];
   const batchSize = 10;
   
-  for (let i = 0; i < allProcessInfo.length; i += batchSize) {
-    processBatches.push(allProcessInfo.slice(i, i + batchSize));
+  for (let i = 0; i < upstream_process_info.length; i += batchSize) {
+    processBatches.push(upstream_process_info.slice(i, i + batchSize));
   }
   
   const responses: AIMessage[] = [];
@@ -545,7 +565,7 @@ async function time_grader(state: typeof stateAnnotation.State){
 
   return {
     messages: responses,
-    all_time_grades: responses, // Store all grades for later use
+    all_time_grades: responses,
   }
 }
 
@@ -815,8 +835,8 @@ async function summarize_time_grades(state: typeof stateAnnotation.State) {
 
   return {
     messages: allSummaries,
-    all_time_summaries: allSummaries,
-  };
+    all_time_grades: allSummaries, // Store all grades for later use
+  }
 }
 
 async function final_summarizer(state: typeof stateAnnotation.State) {
@@ -1023,26 +1043,26 @@ async function process_selector(state: typeof stateAnnotation.State) {
   ) as AIMessage;
 
   const prompt = ChatPromptTemplate.fromTemplate(
-    `You are an expert in the field of Life Cycle Assessment (LCA), specializing in selecting the most suitable processes for a specific analysis. You have been provided with the following information:
+    `You are an expert in the field of Life Cycle Assessment (LCA), specializing in selecting the most suitable processes. The process data provided contains representativeness grades where LOWER NUMBERS INDICATE BETTER REPRESENTATIVENESS (1 is the best, 5 is the worst).
     
     Process Information: {process_info}
     Downstream Process Heterogeneity: {heterogeneity}
     
-    Based on the downstream process heterogeneity, please select the most suitable process considering technical, spatial, and temporal representativeness, as well as flow count. The selection criteria are as follows:
+    Your task is to select the most suitable process following these steps in strict order:
     
     If the evaluation result is RESULT_A:
-      1. Technical Representativeness: Select the processes with the lowest technical representativeness grade (the strongest technical representativeness).
-      2. Temporal Representativeness: From the processes selected in step 1, select those with the lowest temporal representativeness.
-      3. Spatial Representativeness: From the processes selected in step 2, select those with the lowest spatial representativeness.
-      4. Flow Count: From the processes selected in step 3, select the process(es) with the highest flow count.
-      5. Selection: If multiple processes remain after step 4, select one process from them based on your own judgement.
+      1. FIRST filter for processes with the NUMERICALLY LOWEST technical_representativeness value (1 is best, 5 is worst).
+      2. THEN from those remaining, select processes with the NUMERICALLY LOWEST temporal representativeness value.
+      3. THEN from those remaining, select processes with the NUMERICALLY LOWEST spatial representativeness value.
+      4. THEN from those remaining, select the process with the HIGHEST flow_count value.
+      5. If multiple processes remain equal after all steps, select one from them using your judgment.
     
     If the evaluation result is RESULT_B:
-      1. Technical Representativeness: Select the processes with the lowest technical representativeness grade (the strongest technical representativeness).
-      2. Spatial Representativeness: From the processes selected in step 1, select those with the lowest spatial representativeness grade.
-      3. Temporal Representativeness: From the processes selected in step 2, select those with the lowest temporal representativeness grade.
-      4. Flow Count: From the processes selected in step 3, select the process(es) with the highest flow count.
-      5. Selection: If multiple processes remain after step 4, select one process from them based on your own judgement.
+      1. FIRST filter for processes with the NUMERICALLY LOWEST technical_representativeness value (1 is best, 5 is worst).
+      2. THEN from those remaining, select processes with the NUMERICALLY LOWEST spatial representativeness value.
+      3. THEN from those remaining, select processes with the NUMERICALLY LOWEST temporal representativeness value.
+      4. THEN from those remaining, select the process with the HIGHEST flow_count value.
+      5. If multiple processes remain equal after all steps, select one from them using your judgment.
     
     Use the process_selector tool to provide your selection.`
   );
