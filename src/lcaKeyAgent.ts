@@ -294,11 +294,42 @@ async function technical_grader(state: typeof stateAnnotation.State){
       all_process_grades: []
     };
   }
+  
+  let processInfo: any[] = [];
+
+  // Check if we have upstream_process_info from title_matcher
+  if (!upstream_process_info || upstream_process_info.length === 0) {
+    console.log("No upstream_process_info provided from title_matcher, falling back to all processes");
+    
+    // Fallback mechanism: collect process data from all process sheets
+    const allSheetNames = sheet_names.split(',').filter(name => name.trim().startsWith('process_'));
+    processInfo = [];
+    
+    // Collect process data from all process sheets
+    for (const sheetName of allSheetNames) {
+      try {
+        const sheetData = getSheetData(
+          sheetName.trim(),
+          {},
+          ['process_UUID', 'process_name', 'location', 'flow_count']
+        );
+        processInfo = [...processInfo, ...sheetData];
+      } catch (error) {
+        console.error(`Error extracting data from sheet ${sheetName}:`, error);
+      }
+    }
 
   console.log(`Using ${upstream_process_info.length} filtered processes from title_matcher for technical grading`);
 
+    console.log(`Collected ${processInfo.length} total processes from all sheets for grading`);
+  } else {
+    // Use the filtered upstream_process_info from title_matcher
+    processInfo = upstream_process_info;
+    console.log(`Using ${processInfo.length} processes filtered by title_matcher for technical grading`);
+  }
+  
   const prompt = ChatPromptTemplate.fromTemplate(
-    `You need to analyze each process in the provided process list for technical representativeness.
+    `You need to analyze the process for technical representativeness.
 
     Grading criteria are as follows:
     - Grade 1:
@@ -324,7 +355,7 @@ async function technical_grader(state: typeof stateAnnotation.State){
     Process's technology is included in the fourth position of process_name. For example, in the process_name "aluminium oxide production ; aluminium oxide, non-metallurgical ; bauxite ; generic ; 2015", the fourth position "generic" refers to the process_technology.
     Flow name is included in the second position of process_name. For example, in the process_name "aluminium oxide production ; aluminium oxide, non-metallurgical ; bauxite ; generic ; 2015", the second position "aluminium oxide, non-metallurgical" refers to the flow name.
     
-    Use the technical_grader tool to record your assessment for each process.
+    Use the technical_grader tool to record your assessment for this process.
     
     Process_requirements: {process_requirement}
     Technology_requirements: {technology_requirement}
@@ -347,7 +378,7 @@ async function technical_grader(state: typeof stateAnnotation.State){
   const model = new ChatOpenAI({
     apiKey: openai_api_key,
     modelName: openai_chat_model,
-    temperature: 1,
+    temperature: 0,
     streaming: false,
   }).bindTools([tool], { tool_choice: tool.name });
 
@@ -382,11 +413,74 @@ async function technical_grader(state: typeof stateAnnotation.State){
     } catch (error) {
       console.error(`Error grading batch ${i+1}:`, error);
     }
+  console.log(`Processing ${processInfo.length} processes concurrently for technical grading`);
+  
+  // Process concurrently with batching
+  const batchSize = 5; // Process 5 items in parallel at a time
+  const allResponses: AIMessage[] = [];
+  const allGradedProcesses: any[] = [];
+  
+  // Process in batches
+  for (let i = 0; i < processInfo.length; i += batchSize) {
+    const currentBatch = processInfo.slice(i, i + batchSize);
+    console.log(`Processing technical grading batch ${i/batchSize + 1} of ${Math.ceil(processInfo.length/batchSize)}`);
+    
+    const batchPromises = currentBatch.map(async (process, index) => {
+      try {
+        console.log(`Started grading process ${i + index + 1}/${processInfo.length}: ${process.process_name}`);
+        
+        const response = await chain.invoke({ 
+          process_requirement: process_requirement,
+          technology_requirement: technology_requirement,
+          process_info: JSON.stringify(process)
+        }) as AIMessage;
+        
+        console.log(`Completed grading process ${i + index + 1}/${processInfo.length}`);
+        
+        // Extract the graded process from the response
+        if (response.tool_calls && response.tool_calls.length > 0) {
+          const toolCall = response.tool_calls[0];
+          if (toolCall.name === 'technical_grader' && toolCall.args) {
+            return { response, gradedProcess: toolCall.args };
+          }
+        }
+        
+        return { response, gradedProcess: null };
+      } catch (error) {
+        console.error(`Error grading process ${process.process_UUID}:`, error);
+        return { response: null, gradedProcess: null, error };
+      }
+    });
+    
+    // Wait for all promises in the current batch to resolve
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Collect responses and graded processes
+    for (const result of batchResults) {
+      if (result.response) allResponses.push(result.response);
+      if (result.gradedProcess) allGradedProcesses.push(result.gradedProcess);
+    }
+  }
+  
+  console.log(`Total graded processes: ${allGradedProcesses.length} out of ${processInfo.length}`);
+  
+  // Verify all processes were graded
+  const gradedProcessUUIDs = new Set(allGradedProcesses.map(process => process.process_UUID));
+  const allProcessUUIDs = new Set(processInfo.map(process => process.process_UUID));
+  
+  if (gradedProcessUUIDs.size !== allProcessUUIDs.size) {
+    console.warn(`Warning: Not all processes were graded. Expected ${allProcessUUIDs.size}, got ${gradedProcessUUIDs.size}`);
+    
+    // Log which processes weren't graded
+    const missingUUIDs = [...allProcessUUIDs].filter(uuid => !gradedProcessUUIDs.has(uuid));
+    console.warn(`Missing grades for processes: ${missingUUIDs.join(', ')}`);
   }
   
   return {
     messages: responses,
     all_process_grades: responses,
+    messages: allResponses,
+    all_process_grades: allGradedProcesses,
   }
 }
 
@@ -403,11 +497,41 @@ async function spatial_grader(state: typeof stateAnnotation.State){
       all_spatial_grades: []
     };
   }
+  
+  let processInfo: any[];
+
+  // Check if we have upstream_process_info from title_matcher
+  if (!upstream_process_info || upstream_process_info.length === 0) {
+    console.log("No upstream_process_info provided from title_matcher, falling back to all processes");
+    
+    // Fallback mechanism: collect process data from all process sheets
+    const allSheetNames = sheet_names.split(',').filter(name => name.trim().startsWith('process_'));
+    processInfo = [];
+    
+    // Collect process data from all process sheets
+    for (const sheetName of allSheetNames) {
+      try {
+        const sheetData = getSheetData(
+          sheetName.trim(),
+          {},
+          ['process_UUID', 'process_name', 'location', 'flow_count']
+        );
+        processInfo = [...processInfo, ...sheetData];
+      } catch (error) {
+        console.error(`Error extracting data from sheet ${sheetName}:`, error);
+      }
+    }
 
   console.log(`Using ${upstream_process_info.length} filtered processes from title_matcher for spatial grading`);
+    console.log(`Collected ${processInfo.length} total processes from all sheets for spatial grading`);
+  } else {
+    // Use the filtered upstream_process_info from title_matcher
+    processInfo = upstream_process_info;
+    console.log(`Using ${processInfo.length} processes filtered by title_matcher for spatial grading`);
+  }
 
   const prompt = ChatPromptTemplate.fromTemplate(
-    `You need to analyze each process in the provided process list for spatial representativeness.
+    `You need to analyze the process for spatial representativeness.
     
     Grading criteria are as follows:
     - Grade 1:
@@ -424,7 +548,7 @@ async function spatial_grader(state: typeof stateAnnotation.State){
     - Grade 5:
       - Any other situations.
     
-    Use the spatial_grader tool to record your assessment for each process.
+    Use the spatial_grader tool to record your assessment for this process.
     
     Geography_requirements: {geography_requirement}
     process_info: {process_info}`
@@ -445,7 +569,7 @@ async function spatial_grader(state: typeof stateAnnotation.State){
   const model = new ChatOpenAI({
     apiKey: openai_api_key,
     modelName: openai_chat_model,
-    temperature: 1,
+    temperature: 0,
     streaming: false,
   }).bindTools([tool], { tool_choice: tool.name });
 
@@ -454,6 +578,12 @@ async function spatial_grader(state: typeof stateAnnotation.State){
   // Process filtered data in batches
   const processBatches = [];
   const batchSize = 10;
+  console.log(`Processing ${processInfo.length} processes concurrently for spatial grading`);
+  
+  // Process concurrently with batching
+  const batchSize = 5; // Process 5 items in parallel at a time
+  const allResponses: AIMessage[] = [];
+  const allGradedProcesses: any[] = [];
   
   for (let i = 0; i < upstream_process_info.length; i += batchSize) {
     processBatches.push(upstream_process_info.slice(i, i + batchSize));
@@ -475,11 +605,66 @@ async function spatial_grader(state: typeof stateAnnotation.State){
     } catch (error) {
       console.error(`Error in spatial grading batch ${i+1}:`, error);
     }
+  // Process in batches
+  for (let i = 0; i < processInfo.length; i += batchSize) {
+    const currentBatch = processInfo.slice(i, i + batchSize);
+    console.log(`Processing spatial grading batch ${i/batchSize + 1} of ${Math.ceil(processInfo.length/batchSize)}`);
+    
+    const batchPromises = currentBatch.map(async (process, index) => {
+      try {
+        console.log(`Started spatial grading process ${i + index + 1}/${processInfo.length}: ${process.process_name}`);
+        
+        const response = await chain.invoke({ 
+          geography_requirement: geography_requirement,
+          process_info: JSON.stringify(process)
+        }) as AIMessage;
+        
+        console.log(`Completed spatial grading process ${i + index + 1}/${processInfo.length}`);
+        
+        // Extract the graded process from the response
+        if (response.tool_calls && response.tool_calls.length > 0) {
+          const toolCall = response.tool_calls[0];
+          if (toolCall.name === 'spatial_grader' && toolCall.args) {
+            return { response, gradedProcess: toolCall.args };
+          }
+        }
+        
+        return { response, gradedProcess: null };
+      } catch (error) {
+        console.error(`Error in spatial grading process ${process.process_UUID}:`, error);
+        return { response: null, gradedProcess: null, error };
+      }
+    });
+    
+    // Wait for all promises in the current batch to resolve
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Collect responses and graded processes
+    for (const result of batchResults) {
+      if (result.response) allResponses.push(result.response);
+      if (result.gradedProcess) allGradedProcesses.push(result.gradedProcess);
+    }
+  }
+  
+  console.log(`Total spatially graded processes: ${allGradedProcesses.length} out of ${processInfo.length}`);
+  
+  // Verify all processes were graded
+  const gradedProcessUUIDs = new Set(allGradedProcesses.map(process => process.process_UUID));
+  const allProcessUUIDs = new Set(processInfo.map(process => process.process_UUID));
+  
+  if (gradedProcessUUIDs.size !== allProcessUUIDs.size) {
+    console.warn(`Warning: Not all processes were spatially graded. Expected ${allProcessUUIDs.size}, got ${gradedProcessUUIDs.size}`);
+    
+    // Log which processes weren't graded
+    const missingUUIDs = [...allProcessUUIDs].filter(uuid => !gradedProcessUUIDs.has(uuid));
+    console.warn(`Missing spatial grades for processes: ${missingUUIDs.join(', ')}`);
   }
 
   return {
     messages: responses,
     all_spatial_grades: responses,
+    messages: allResponses,
+    all_spatial_grades: allGradedProcesses,
   }
 }
 
@@ -496,11 +681,41 @@ async function time_grader(state: typeof stateAnnotation.State){
       all_time_grades: []
     };
   }
+  
+  let processInfo: any[];
+
+  // Check if we have upstream_process_info from title_matcher
+  if (!upstream_process_info || upstream_process_info.length === 0) {
+    console.log("No upstream_process_info provided from title_matcher, falling back to all processes");
+    
+    // Fallback mechanism: collect process data from all process sheets
+    const allSheetNames = sheet_names.split(',').filter(name => name.trim().startsWith('process_'));
+    processInfo = [];
+    
+    // Collect process data from all process sheets
+    for (const sheetName of allSheetNames) {
+      try {
+        const sheetData = getSheetData(
+          sheetName.trim(),
+          {},
+          ['process_UUID', 'process_name', 'location', 'flow_count']
+        );
+        processInfo = [...processInfo, ...sheetData];
+      } catch (error) {
+        console.error(`Error extracting data from sheet ${sheetName}:`, error);
+      }
+    }
 
   console.log(`Using ${upstream_process_info.length} filtered processes from title_matcher for time grading`);
+    console.log(`Collected ${processInfo.length} total processes from all sheets for time grading`);
+  } else {
+    // Use the filtered upstream_process_info from title_matcher
+    processInfo = upstream_process_info;
+    console.log(`Using ${processInfo.length} processes filtered by title_matcher for time grading`);
+  }
 
   const prompt = ChatPromptTemplate.fromTemplate(
-    `You need to analyze each process in the provided process list for time representativeness.
+    `You need to analyze the process for time representativeness.
     
     Grading criteria are as follows:
     - Grade 1: When the process's time frame is the same year as the time_requirement.
@@ -511,7 +726,7 @@ async function time_grader(state: typeof stateAnnotation.State){
     
     Time frame is included in the last position of process_name. For example, in the process_name "aluminium oxide production ; aluminium oxide, non-metallurgical ; bauxite ; generic ; 2015", the last position "2015" refers to the time frame.
     
-    Use the time_grader tool to record your assessment for each process.
+    Use the time_grader tool to record your assessment for this process.
     
     Time_requirements: {time_requirement}
     process_info: {process_info}`
@@ -531,7 +746,7 @@ async function time_grader(state: typeof stateAnnotation.State){
   const model = new ChatOpenAI({
     apiKey: openai_api_key,
     modelName: openai_chat_model,
-    temperature: 1,
+    temperature: 0,
     streaming: false,
   }).bindTools([tool], { tool_choice: tool.name });
 
@@ -540,6 +755,12 @@ async function time_grader(state: typeof stateAnnotation.State){
   // Process filtered data in batches
   const processBatches = [];
   const batchSize = 10;
+  console.log(`Processing ${processInfo.length} processes concurrently for time grading`);
+  
+  // Process concurrently with batching
+  const batchSize = 5; // Process 5 items in parallel at a time
+  const allResponses: AIMessage[] = [];
+  const allGradedProcesses: any[] = [];
   
   for (let i = 0; i < upstream_process_info.length; i += batchSize) {
     processBatches.push(upstream_process_info.slice(i, i + batchSize));
@@ -561,11 +782,66 @@ async function time_grader(state: typeof stateAnnotation.State){
     } catch (error) {
       console.error(`Error in time grading batch ${i+1}:`, error);
     }
+  // Process in batches
+  for (let i = 0; i < processInfo.length; i += batchSize) {
+    const currentBatch = processInfo.slice(i, i + batchSize);
+    console.log(`Processing time grading batch ${i/batchSize + 1} of ${Math.ceil(processInfo.length/batchSize)}`);
+    
+    const batchPromises = currentBatch.map(async (process, index) => {
+      try {
+        console.log(`Started time grading process ${i + index + 1}/${processInfo.length}: ${process.process_name}`);
+        
+        const response = await chain.invoke({ 
+          time_requirement: time_requirement,
+          process_info: JSON.stringify(process)
+        }) as AIMessage;
+        
+        console.log(`Completed time grading process ${i + index + 1}/${processInfo.length}`);
+        
+        // Extract the graded process from the response
+        if (response.tool_calls && response.tool_calls.length > 0) {
+          const toolCall = response.tool_calls[0];
+          if (toolCall.name === 'time_grader' && toolCall.args) {
+            return { response, gradedProcess: toolCall.args };
+          }
+        }
+        
+        return { response, gradedProcess: null };
+      } catch (error) {
+        console.error(`Error in time grading process ${process.process_UUID}:`, error);
+        return { response: null, gradedProcess: null, error };
+      }
+    });
+    
+    // Wait for all promises in the current batch to resolve
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Collect responses and graded processes
+    for (const result of batchResults) {
+      if (result.response) allResponses.push(result.response);
+      if (result.gradedProcess) allGradedProcesses.push(result.gradedProcess);
+    }
+  }
+  
+  console.log(`Total time graded processes: ${allGradedProcesses.length} out of ${processInfo.length}`);
+  
+  // Verify all processes were graded
+  const gradedProcessUUIDs = new Set(allGradedProcesses.map(process => process.process_UUID));
+  const allProcessUUIDs = new Set(processInfo.map(process => process.process_UUID));
+  
+  if (gradedProcessUUIDs.size !== allProcessUUIDs.size) {
+    console.warn(`Warning: Not all processes were time graded. Expected ${allProcessUUIDs.size}, got ${gradedProcessUUIDs.size}`);
+    
+    // Log which processes weren't graded
+    const missingUUIDs = [...allProcessUUIDs].filter(uuid => !gradedProcessUUIDs.has(uuid));
+    console.warn(`Missing time grades for processes: ${missingUUIDs.join(', ')}`);
   }
 
   return {
     messages: responses,
     all_time_grades: responses,
+    messages: allResponses,
+    all_time_grades: allGradedProcesses,
   }
 }
 
@@ -627,7 +903,7 @@ async function summarize_technical_grades(state: typeof stateAnnotation.State) {
   const model = new ChatOpenAI({
     apiKey: openai_api_key,
     modelName: openai_chat_model,
-    temperature: 0.2,
+    temperature: 0,
     streaming: false,
   }).bindTools([tool], { tool_choice: tool.name });
 
@@ -718,7 +994,7 @@ async function summarize_spatial_grades(state: typeof stateAnnotation.State) {
   const model = new ChatOpenAI({
     apiKey: openai_api_key,
     modelName: openai_chat_model,
-    temperature: 0.2,
+    temperature: 0,
     streaming: false,
   }).bindTools([tool], { tool_choice: tool.name });
 
@@ -808,7 +1084,7 @@ async function summarize_time_grades(state: typeof stateAnnotation.State) {
   const model = new ChatOpenAI({
     apiKey: openai_api_key,
     modelName: openai_chat_model,
-    temperature: 0.2,
+    temperature: 0,
     streaming: false,
   }).bindTools([tool], { tool_choice: tool.name });
 
@@ -841,6 +1117,8 @@ async function summarize_time_grades(state: typeof stateAnnotation.State) {
 
 async function final_summarizer(state: typeof stateAnnotation.State) {
   const { messages } = state;
+  
+  console.log("Starting final summarizer - collecting grade data");
   
   // Find all the summary messages by type
   const technicalSummaries = messages.filter(msg => 
@@ -909,50 +1187,13 @@ async function final_summarizer(state: typeof stateAnnotation.State) {
     }
   }
 
-  // Create final summaries for each process
+  // Create final summaries for each process - directly without LLM
   const finalSummaries: AIMessage[] = [];
   const processUUIDs = Object.keys(allProcesses);
   
-  console.log(`Creating final summaries for ${processUUIDs.length} processes`);
+  console.log(`Creating final summaries for ${processUUIDs.length} processes (optimized method)`);
   
-  const prompt = ChatPromptTemplate.fromTemplate(
-    `You are a professional in the field of LCA, specializing in summarizing representativeness of a unit process.
-    
-    Please analyze the provided data and create a comprehensive assessment that combines technical, spatial, and time representativeness for this process.
-    Use the final_summary tool to provide your assessment.
-    
-    Process UUID: {process_uuid}
-    Process Name: {process_name}
-    Location: {location}
-    Technical Grade: {technical_grade}
-    Spatial Grade: {spatial_grade}
-    Time Grade: {time_grade}
-    Flow Count: {flow_count}`
-  );
-  
-  const tool = {
-    name: 'final_summary',
-    description: 'Summarize overall representativeness results',
-    schema: z.object({
-      process_UUID: z.string().describe('UUID of the process'),
-      process_name: z.string().describe('Name of the process'),
-      location: z.string().describe('Location information of the process'),
-      flow_count: z.string().describe('Flow count of the process'),
-      technical_representativeness: z.string().describe('Technical representativeness grade (1-5)'),
-      spatial_representativeness: z.string().describe('Spatial representativeness grade (1-5)'),
-      time_representativeness: z.string().describe('Time representativeness grade (1-5)')
-    }),
-  };
-
-  const model = new ChatOpenAI({
-    apiKey: openai_api_key,
-    modelName: openai_chat_model,
-    temperature: 0.2,
-    streaming: false,
-  }).bindTools([tool], { tool_choice: tool.name });
-
-  const chain = prompt.pipe(model);
-  
+  // Directly create synthetic AIMessages with the required tool_calls structure
   for (const processUUID of processUUIDs) {
     const processData = allProcesses[processUUID];
     if (!processData.technical_grade || !processData.spatial_grade || !processData.time_grade) {
@@ -961,21 +1202,34 @@ async function final_summarizer(state: typeof stateAnnotation.State) {
     }
     
     try {
-      const response = await chain.invoke({ 
-        process_uuid: processUUID,
+      // Create a synthetic AIMessage with the expected tool_calls structure
+      const summary = {
+        process_UUID: processUUID,
         process_name: processData.process_name || "Unknown Process",
         location: processData.location || "Unknown Location",
-        technical_grade: processData.technical_grade || "N/A",
-        spatial_grade: processData.spatial_grade || "N/A",
-        time_grade: processData.time_grade || "N/A",
-        flow_count: processData.flow_count || "0"
-      }) as AIMessage;
+        flow_count: processData.flow_count || "0",
+        technical_representativeness: processData.technical_grade,
+        spatial_representativeness: processData.spatial_grade,
+        time_representativeness: processData.time_grade
+      };
       
-      finalSummaries.push(response);
+      // Create a synthetic AIMessage mimicking the structure from LLM responses
+      const aiMessage = new AIMessage({
+        content: "",
+        tool_calls: [{
+          name: 'final_summary',
+          args: summary
+        }]
+      });
+      
+      finalSummaries.push(aiMessage);
+      
     } catch (error) {
       console.error(`Error creating final summary for process ${processUUID}:`, error);
     }
   }
+
+  console.log(`Finished creating ${finalSummaries.length} final summaries without LLM calls`);
 
   return {
     messages: finalSummaries,
@@ -1033,15 +1287,24 @@ async function heterogeneity_evaluator(state: typeof stateAnnotation.State) {
 async function process_selector(state: typeof stateAnnotation.State) {
   const { messages } = state;
   
-  // Find the final summary and heterogeneity evaluator outputs
-  const finalSummary = messages.find(msg => 
+  // Find ALL final summaries instead of just one
+  const finalSummaries = messages.filter(msg => 
     (msg as AIMessage).tool_calls?.some(tool => tool.name === 'final_summary')
-  ) as AIMessage;
+  ) as AIMessage[];
   
   const heterogeneityEval = messages.find(msg => 
     (msg as AIMessage).tool_calls?.some(tool => tool.name === 'heterogeneity_evaluator')
   ) as AIMessage;
 
+  // Extract process data from all summaries
+  const allProcesses = finalSummaries.map(summary => {
+    const data = summary.tool_calls?.[0]?.args;
+    if (data) return data;
+    return null;
+  }).filter(Boolean);
+
+  console.log(`Collected ${allProcesses.length} processes for selection evaluation`);
+  
   const prompt = ChatPromptTemplate.fromTemplate(
     `You are an expert in the field of Life Cycle Assessment (LCA), specializing in selecting the most suitable processes. The process data provided contains representativeness grades where LOWER NUMBERS INDICATE BETTER REPRESENTATIVENESS (1 is the best, 5 is the worst).
     
@@ -1067,6 +1330,7 @@ async function process_selector(state: typeof stateAnnotation.State) {
     Use the process_selector tool to provide your selection.`
   );
   
+  // Rest of the function remains the same
   const tool = {
     name: 'process_selector',
     description: 'Select the most suitable process for LCA',
@@ -1080,23 +1344,24 @@ async function process_selector(state: typeof stateAnnotation.State) {
 
   const model = new ChatOpenAI({
     apiKey: openai_api_key,
-    modelName: openai_chat_model,
-    temperature: 0.2,
+    modelName: "o1",
     streaming: false,
   }).bindTools([tool], { tool_choice: tool.name });
 
   const chain = prompt.pipe(model);
   
-  const processInfo = finalSummary?.tool_calls?.[0]?.args || "No data";
   const heterogeneityInfo = heterogeneityEval?.tool_calls?.[0]?.args || "No data";
   
+  // Pass all processes instead of just one
   const response = await chain.invoke({ 
-    process_info: JSON.stringify(processInfo),
+    process_info: JSON.stringify(allProcesses),
     heterogeneity: JSON.stringify(heterogeneityInfo)
   }) as AIMessage;
   
   // After selecting the process, fetch its associated flows
   const selectedProcessUUID = response.tool_calls?.[0]?.args?.process_UUID || "";
+  
+  console.log(`Selected process UUID: ${selectedProcessUUID}`);
   
   // Get selected flows using the helper function
   const selectedFlows = getSelectedFlow(selectedProcessUUID);
