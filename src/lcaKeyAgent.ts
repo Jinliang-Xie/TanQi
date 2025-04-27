@@ -118,26 +118,6 @@ async function title_matcher(state: typeof stateAnnotation.State){
   const lastMessage = messages[messages.length - 1] as AIMessage;
   const process_requirement = lastMessage.tool_calls?.[0]?.args?.Process ?? '';
 
-  // 首先列出所有可用的工作表
-  try {
-    console.log('=================== DEBUG INFO ===================');
-    console.log('所有可用的Excel工作表:', sheet_names);
-    
-    // 尝试读取所有工作表的记录数量
-    const sheetNamesList = sheet_names.split(',').map(name => name.trim());
-    for (const sheetName of sheetNamesList) {
-      try {
-        const sheetData = utils.loadExcel(file_path, sheetName);
-        console.log(`工作表 "${sheetName}" 包含 ${sheetData.length} 条记录`);
-      } catch (error) {
-        console.error(`无法读取工作表 "${sheetName}": ${error}`);
-      }
-    }
-    console.log('=================== END DEBUG INFO ===================');
-  } catch (error) {
-    console.error('调试过程中出错:', error);
-  }
-
   const prompt = ChatPromptTemplate.fromTemplate(
     `You are acting as a title matcher for selecting relevant sheets from an Excel file based on the given product specification. Your task is to identify the two most appropriate sheet names that are semantically consistent with the provided product specification.
     
@@ -186,16 +166,6 @@ async function title_matcher(state: typeof stateAnnotation.State){
 
     console.log(`Selected sheets: Process=${selected_process_sheet}, Flow=${selected_flow_sheet}`);
 
-    // 先检查所选工作表的完整数据
-    try {
-      const allProcessData = utils.loadExcel(file_path, selected_process_sheet);
-      console.log(`完整的工作表 ${selected_process_sheet} 数据: ${allProcessData.length} 条记录`);
-      // 显示前三条记录的关键字段
-      console.log(`工作表数据示例 (前3条): `, allProcessData.slice(0, 3));
-    } catch (error) {
-      console.error(`读取完整工作表数据失败: ${error}`);
-    }
-
     // Extract the actual data from the selected sheets
     const upstream_process_info_str = utils.extractSheetToJson(
       file_path,
@@ -203,22 +173,6 @@ async function title_matcher(state: typeof stateAnnotation.State){
       {},
       ['process_UUID', 'process_name', 'location', 'flow_count']
     );
-    
-    // 添加详细日志，检查原始数据长度
-    try {
-      const rawProcessData = JSON.parse(upstream_process_info_str);
-      console.log(`Raw process data from Excel: ${rawProcessData.length} records found`);
-      
-      // 检查每条记录的关键字段
-      if (rawProcessData.length > 0) {
-        console.log(`First record sample:`, rawProcessData[0]);
-        if (rawProcessData.length < 10) {
-          console.log(`All records:`, rawProcessData);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to parse raw process data for debugging:", error);
-    }
     
     const upstream_flow_info_str = utils.extractSheetToJson(
       file_path,
@@ -285,15 +239,6 @@ async function technical_grader(state: typeof stateAnnotation.State){
   const lastMessage = messages[messages.length - 2] as AIMessage;
   const process_requirement = lastMessage.tool_calls?.[0]?.args?.Process ?? '';
   const technology_requirement = lastMessage.tool_calls?.[0]?.args?.Technology ?? '';
-
-  // Use the filtered data from title_matcher instead of recollecting all data
-  if (!upstream_process_info || !Array.isArray(upstream_process_info) || upstream_process_info.length === 0) {
-    console.error("No valid upstream process information found from title_matcher");
-    return {
-      messages: [new AIMessage({ content: "No valid upstream process information found" })],
-      all_process_grades: []
-    };
-  }
   
   let processInfo: any[] = [];
 
@@ -318,8 +263,6 @@ async function technical_grader(state: typeof stateAnnotation.State){
         console.error(`Error extracting data from sheet ${sheetName}:`, error);
       }
     }
-
-  console.log(`Using ${upstream_process_info.length} filtered processes from title_matcher for technical grading`);
 
     console.log(`Collected ${processInfo.length} total processes from all sheets for grading`);
   } else {
@@ -384,35 +327,6 @@ async function technical_grader(state: typeof stateAnnotation.State){
 
   const chain = prompt.pipe(model);
 
-  // Process filtered data in batches
-  const processBatches = [];
-  const batchSize = 10;
-  
-  for (let i = 0; i < upstream_process_info.length; i += batchSize) {
-    processBatches.push(upstream_process_info.slice(i, i + batchSize));
-  }
-  
-  console.log(`Divided ${upstream_process_info.length} filtered processes into ${processBatches.length} batches for grading`);
-  
-  // Process each batch and collect results
-  const responses: AIMessage[] = [];
-  
-  for (let i = 0; i < processBatches.length; i++) {
-    const batchProcesses = processBatches[i];
-    console.log(`Grading batch ${i+1}/${processBatches.length} with ${batchProcesses.length} processes`);
-    
-    try {
-      // Call the model for each batch
-      const response = await chain.invoke({ 
-        process_requirement: process_requirement,
-        technology_requirement: technology_requirement,
-        process_info: JSON.stringify(batchProcesses)
-      }) as AIMessage;
-      
-      responses.push(response);
-    } catch (error) {
-      console.error(`Error grading batch ${i+1}:`, error);
-    }
   console.log(`Processing ${processInfo.length} processes concurrently for technical grading`);
   
   // Process concurrently with batching
@@ -477,8 +391,6 @@ async function technical_grader(state: typeof stateAnnotation.State){
   }
   
   return {
-    messages: responses,
-    all_process_grades: responses,
     messages: allResponses,
     all_process_grades: allGradedProcesses,
   }
@@ -489,15 +401,6 @@ async function spatial_grader(state: typeof stateAnnotation.State){
   const lastMessage = messages[messages.length - 2] as AIMessage;
   const geography_requirement = lastMessage.tool_calls?.[0]?.args?.geographicLocation ?? '';
 
-  // Use the filtered data from title_matcher
-  if (!upstream_process_info || !Array.isArray(upstream_process_info) || upstream_process_info.length === 0) {
-    console.error("No valid upstream process information found from title_matcher");
-    return {
-      messages: [new AIMessage({ content: "No valid upstream process information found" })],
-      all_spatial_grades: []
-    };
-  }
-  
   let processInfo: any[];
 
   // Check if we have upstream_process_info from title_matcher
@@ -522,7 +425,6 @@ async function spatial_grader(state: typeof stateAnnotation.State){
       }
     }
 
-  console.log(`Using ${upstream_process_info.length} filtered processes from title_matcher for spatial grading`);
     console.log(`Collected ${processInfo.length} total processes from all sheets for spatial grading`);
   } else {
     // Use the filtered upstream_process_info from title_matcher
@@ -575,9 +477,6 @@ async function spatial_grader(state: typeof stateAnnotation.State){
 
   const chain = prompt.pipe(model);
 
-  // Process filtered data in batches
-  const processBatches = [];
-  const batchSize = 10;
   console.log(`Processing ${processInfo.length} processes concurrently for spatial grading`);
   
   // Process concurrently with batching
@@ -585,26 +484,6 @@ async function spatial_grader(state: typeof stateAnnotation.State){
   const allResponses: AIMessage[] = [];
   const allGradedProcesses: any[] = [];
   
-  for (let i = 0; i < upstream_process_info.length; i += batchSize) {
-    processBatches.push(upstream_process_info.slice(i, i + batchSize));
-  }
-  
-  const responses: AIMessage[] = [];
-  
-  for (let i = 0; i < processBatches.length; i++) {
-    const batchProcesses = processBatches[i];
-    console.log(`Spatial grading batch ${i+1}/${processBatches.length} with ${batchProcesses.length} processes`);
-    
-    try {
-      const response = await chain.invoke({ 
-        geography_requirement: geography_requirement,
-        process_info: JSON.stringify(batchProcesses)
-      }) as AIMessage;
-      
-      responses.push(response);
-    } catch (error) {
-      console.error(`Error in spatial grading batch ${i+1}:`, error);
-    }
   // Process in batches
   for (let i = 0; i < processInfo.length; i += batchSize) {
     const currentBatch = processInfo.slice(i, i + batchSize);
@@ -661,8 +540,6 @@ async function spatial_grader(state: typeof stateAnnotation.State){
   }
 
   return {
-    messages: responses,
-    all_spatial_grades: responses,
     messages: allResponses,
     all_spatial_grades: allGradedProcesses,
   }
@@ -672,15 +549,6 @@ async function time_grader(state: typeof stateAnnotation.State){
   const { messages, upstream_process_info } = state;
   const lastMessage = messages[messages.length - 2] as AIMessage;
   const time_requirement = lastMessage.tool_calls?.[0]?.args?.timeFrame ?? '';
-
-  // Use the filtered data from title_matcher
-  if (!upstream_process_info || !Array.isArray(upstream_process_info) || upstream_process_info.length === 0) {
-    console.error("No valid upstream process information found from title_matcher");
-    return {
-      messages: [new AIMessage({ content: "No valid upstream process information found" })],
-      all_time_grades: []
-    };
-  }
   
   let processInfo: any[];
 
@@ -706,7 +574,6 @@ async function time_grader(state: typeof stateAnnotation.State){
       }
     }
 
-  console.log(`Using ${upstream_process_info.length} filtered processes from title_matcher for time grading`);
     console.log(`Collected ${processInfo.length} total processes from all sheets for time grading`);
   } else {
     // Use the filtered upstream_process_info from title_matcher
@@ -752,9 +619,6 @@ async function time_grader(state: typeof stateAnnotation.State){
 
   const chain = prompt.pipe(model);
 
-  // Process filtered data in batches
-  const processBatches = [];
-  const batchSize = 10;
   console.log(`Processing ${processInfo.length} processes concurrently for time grading`);
   
   // Process concurrently with batching
@@ -762,26 +626,6 @@ async function time_grader(state: typeof stateAnnotation.State){
   const allResponses: AIMessage[] = [];
   const allGradedProcesses: any[] = [];
   
-  for (let i = 0; i < upstream_process_info.length; i += batchSize) {
-    processBatches.push(upstream_process_info.slice(i, i + batchSize));
-  }
-  
-  const responses: AIMessage[] = [];
-  
-  for (let i = 0; i < processBatches.length; i++) {
-    const batchProcesses = processBatches[i];
-    console.log(`Time grading batch ${i+1}/${processBatches.length} with ${batchProcesses.length} processes`);
-    
-    try {
-      const response = await chain.invoke({ 
-        time_requirement: time_requirement,
-        process_info: JSON.stringify(batchProcesses)
-      }) as AIMessage;
-      
-      responses.push(response);
-    } catch (error) {
-      console.error(`Error in time grading batch ${i+1}:`, error);
-    }
   // Process in batches
   for (let i = 0; i < processInfo.length; i += batchSize) {
     const currentBatch = processInfo.slice(i, i + batchSize);
@@ -838,8 +682,6 @@ async function time_grader(state: typeof stateAnnotation.State){
   }
 
   return {
-    messages: responses,
-    all_time_grades: responses,
     messages: allResponses,
     all_time_grades: allGradedProcesses,
   }
