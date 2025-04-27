@@ -1031,18 +1031,18 @@ async function process_selector(state: typeof stateAnnotation.State) {
     Based on the downstream process heterogeneity, please select the most suitable process considering technical, spatial, and temporal representativeness, as well as flow count. The selection criteria are as follows:
     
     If the evaluation result is RESULT_A:
-      1. Technical Representativeness: Select all processes with the lowest technical representativeness.
+      1. Technical Representativeness: Select the processes with the lowest technical representativeness grade (the strongest technical representativeness).
       2. Temporal Representativeness: From the processes selected in step 1, select those with the lowest temporal representativeness.
       3. Spatial Representativeness: From the processes selected in step 2, select those with the lowest spatial representativeness.
       4. Flow Count: From the processes selected in step 3, select the process(es) with the highest flow count.
-      5. Random Selection: If multiple processes remain after step 4, randomly select one process.
+      5. Selection: If multiple processes remain after step 4, select one process from them based on your own judgement.
     
     If the evaluation result is RESULT_B:
-      1. Technical Representativeness: Select all processes with the lowest technical representativeness.
-      2. Spatial Representativeness: From the processes selected in step 1, select those with the lowest spatial representativeness.
-      3. Temporal Representativeness: From the processes selected in step 2, select those with the lowest temporal representativeness.
+      1. Technical Representativeness: Select the processes with the lowest technical representativeness grade (the strongest technical representativeness).
+      2. Spatial Representativeness: From the processes selected in step 1, select those with the lowest spatial representativeness grade.
+      3. Temporal Representativeness: From the processes selected in step 2, select those with the lowest temporal representativeness grade.
       4. Flow Count: From the processes selected in step 3, select the process(es) with the highest flow count.
-      5. Random Selection: If multiple processes remain after step 4, randomly select one process.
+      5. Selection: If multiple processes remain after step 4, select one process from them based on your own judgement.
     
     Use the process_selector tool to provide your selection.`
   );
