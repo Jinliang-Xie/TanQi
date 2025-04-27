@@ -42,9 +42,20 @@ function getSheetData(sheetName: string, filterConditions?: {[key: string]: any}
 }
 
 // 根据流程UUID获取流数据
-function getSelectedFlow(processUUID: string): any[] {
+function getSelectedFlow(processUUID: string, state?: typeof stateAnnotation.State): any[] {
+  // 获取动态选择的flow sheet名称
+  const sheetName = state?.selected_flow_sheet || "";
+  
+  // 如果没有选定的工作表，记录错误并返回空数组
+  if (!sheetName) {
+    console.error(`没有可用的flow sheet，无法获取流程 ${processUUID} 的流数据`);
+    return [];
+  }
+  
+  console.log(`使用工作表 "${sheetName}" 获取流程 ${processUUID} 的流数据`);
+  
   return getSheetData(
-    "flow_all",
+    sheetName,
     {'process_UUID': processUUID, 'Input/Output': 'Input'},
     ['flow_name', 'flow_UUID']
   );
@@ -60,13 +71,17 @@ const stateAnnotation = Annotation.Root({
   selected_flow: Annotation<any[]>(), // 存储已选择流的数据
   upstream_process_info: Annotation<any[]>(), // 存储上游处理过程信息
   upstream_flow_info: Annotation<any[]>(), // 存储上游流信息
+  selected_flow_sheet: Annotation<string>({ // 存储title_matcher选择的flow工作表名称
+    default: () => "", // 默认为空字符串，不再使用flow_all作为默认值
+    reducer: (_, y) => y, // 直接替换当前值，忽略旧值
+  }),
   iteration_count: Annotation<number>({ // 添加迭代计数器
     default: () => 0, // 默认值为0
     reducer: (x, y) => x + y, // 累加计数器
   }),
   demands: Annotation<any[]>({ // 添加多需求数组
     default: () => [], // 默认为空数组
-    reducer: (x, y) => y, // 完全替换，不累加
+    reducer: (_, y) => y, // 完全替换，不累加，忽略旧值
   }),
 });
 
@@ -222,14 +237,16 @@ async function title_matcher(state: typeof stateAnnotation.State){
     return {
       messages: [response],
       upstream_process_info: upstream_process_info,
-      upstream_flow_info: upstream_flow_info
+      upstream_flow_info: upstream_flow_info,
+      selected_flow_sheet: selected_flow_sheet // 保存选择的flow工作表名称到状态中
     }
   } catch (error) {
     console.error("Error in title_matcher function:", error);
     return {
       messages: [response],
       upstream_process_info: [],
-      upstream_flow_info: []
+      upstream_flow_info: [],
+      selected_flow_sheet: "" // 使用空字符串，不再使用默认值flow_all
     }
   }
 }
@@ -962,7 +979,7 @@ async function final_summarizer(state: typeof stateAnnotation.State) {
   
   console.log("Starting final summarizer - collecting grade data");
   
-  // Find all the summary messages by type
+  // Find the summary messages by type
   const technicalSummaries = messages.filter(msg => 
     (msg as AIMessage).tool_calls?.some(tool => tool.name === 'technical_summary')
   ) as AIMessage[];
@@ -1172,7 +1189,6 @@ async function process_selector(state: typeof stateAnnotation.State) {
     Use the process_selector tool to provide your selection.`
   );
   
-  // Rest of the function remains the same
   const tool = {
     name: 'process_selector',
     description: 'Select the most suitable process for LCA',
@@ -1205,8 +1221,8 @@ async function process_selector(state: typeof stateAnnotation.State) {
   
   console.log(`Selected process UUID: ${selectedProcessUUID}`);
   
-  // Get selected flows using the helper function
-  const selectedFlows = getSelectedFlow(selectedProcessUUID);
+  // Get selected flows using the helper function with state参数
+  const selectedFlows = getSelectedFlow(selectedProcessUUID, state);
   console.log(`Selected flows for process ${selectedProcessUUID}:`, selectedFlows);
 
   return {
@@ -1616,9 +1632,6 @@ const workflow = new StateGraph(stateAnnotation)
     .addEdge("heterogeneity_evaluator", "process_selector")
     .addEdge("process_selector", "boundary_judger")
     .addEdge("process_selector", "industry_analyst")
-    .addEdge("process_selector", "flow_analyst")
-    .addEdge("industry_analyst", "flow_analyst")
-    .addEdge("industry_analyst", "flow_analyst") 
     .addEdge("industry_analyst", "flow_analyst")
     .addEdge("flow_analyst", "flow_judger")
     .addEdge("flow_judger", "flow_filter")
