@@ -3,7 +3,8 @@
   "dockerfile_lines": [],
   "dependencies": ["."],
   "graphs": {
-    "lcaKeyAgent": "./src/lcaKeyAgent.ts:graph"
+    "lcaKeyAgent": "./src/lcaKeyAgent.ts:graph",
+    "lcaComposeAgent": "./src/lcaComposeAgent.ts:graph"
   },
   "env": ".env"
 }
