@@ -1202,7 +1202,7 @@ async function process_selector(state: typeof stateAnnotation.State) {
 
   const model = new ChatOpenAI({
     apiKey: openai_api_key,
-    modelName: "o1",
+    modelName: "gpt-4.1",
     streaming: false,
   }).bindTools([tool], { tool_choice: tool.name });
 
